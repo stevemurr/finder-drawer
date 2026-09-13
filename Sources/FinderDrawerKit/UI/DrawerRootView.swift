@@ -4,130 +4,117 @@ import SwiftUI
 
 struct DrawerRootView: View {
     @Bindable var workspace: DrawerWorkspace
-    @FocusState private var searchFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var hoveringTabs = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            HStack(spacing: 0) {
-                sidebar.frame(width: 188)
+        HStack(spacing: 0) {
+            if workspace.preferences.isSidebarVisible {
+                sidebar.frame(width: DrawerWorkspace.sidebarWidth)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
                 Divider()
-                VStack(spacing: 0) {
-                    tabBar
-                    Divider()
-                    if workspace.isSearchPresented {
-                        searchResults
-                    } else if let browser = workspace.browser, browser.currentRoot != nil {
-                        VStack(spacing: 0) {
-                            breadcrumbs(browser)
-                            Divider()
-                            BrowserColumnSurface(
-                                viewModel: browser,
-                                showsItemSizes: workspace.preferences.showItemSizes
-                            )
-                        }
-                    } else {
-                        ContentUnavailableView {
-                            Label("Your files, a shortcut away", systemImage: "folder")
-                        } description: {
-                            Text("Choose the folders you want to browse and search.")
-                        } actions: {
-                            Button("Choose Folders…", action: workspace.chooseFolders)
-                                .buttonStyle(.borderedProminent)
-                        }
+            }
+            VStack(spacing: 0) {
+                tabBar
+                Divider()
+                if workspace.isSplit {
+                    HSplitView {
+                        pane(.primary).frame(minWidth: 240)
+                        pane(.secondary).frame(minWidth: 240)
                     }
+                } else { pane(.primary) }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(Color(nsColor: .windowBackgroundColor))
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: workspace.preferences.isSidebarVisible)
+        .allowsHitTesting(!workspace.isPalettePresented)
+        .overlay {
+            GeometryReader { geometry in
+                if workspace.isPalettePresented {
+                    ZStack {
+                        Color.black.opacity(0.035).contentShape(Rectangle()).onTapGesture { workspace.dismissPalette() }
+                        DrawerActionsView(workspace: workspace,
+                            maximumListHeight: max(80, min(400, geometry.size.height - 180)),
+                            availableWidth: geometry.size.width - 48, focusIdentifier: workspace.paletteInputIdentifier)
+                        .id(workspace.paletteInputIdentifier)
+                        .transition(reduceMotion ? .opacity : .offset(x: -geometry.size.width * 0.3, y: geometry.size.height * 0.3)
+                            .combined(with: .scale(scale: 0.15, anchor: .bottomLeading)).combined(with: .opacity))
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            Divider()
-            footer
+            .animation(reduceMotion ? nil : .spring(response: 0.28, dampingFraction: 0.9), value: workspace.isPalettePresented)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
         .frame(minWidth: 760, minHeight: 380)
-        .onChange(of: workspace.searchFocusToken) { searchFocused = true }
-        .onChange(of: workspace.isSearchPresented) { _, presented in searchFocused = presented }
         .onChange(of: workspace.search.results) { workspace.resultsDidChange() }
-        .onChange(of: workspace.selectedResultID) {
-            workspace.quickLook.refreshIfVisible(with: workspace.selectedResult)
-        }
-        .onChange(of: workspace.browser?.currentRoot) { workspace.persistTabs() }
+        .onChange(of: workspace.selectedTab?.currentRoot) { workspace.persistTabs() }
         .onChange(of: workspace.preferences.showHiddenFiles) { workspace.applyPreferences() }
         .onChange(of: workspace.preferences.sortOrder) { workspace.applyPreferences() }
-        .sheet(isPresented: $workspace.isFolderPickerPresented) { FolderPickerView(workspace: workspace) }
-        .sheet(isPresented: $workspace.isPreferencesPresented) { preferences }
         .alert("Couldn’t complete the action", isPresented: Binding(
             get: { workspace.errorMessage != nil || workspace.browser?.errorMessage != nil },
             set: { if !$0 { workspace.errorMessage = nil; workspace.browser?.errorMessage = nil } }
         )) {
             Button("OK", role: .cancel) { workspace.errorMessage = nil; workspace.browser?.errorMessage = nil }
-        } message: {
-            Text(workspace.errorMessage ?? workspace.browser?.errorMessage ?? "")
-        }
+        } message: { Text(workspace.errorMessage ?? workspace.browser?.errorMessage ?? "") }
     }
 
-    private var toolbar: some View {
-        @Bindable var search = workspace.search
-        @Bindable var preferences = workspace.preferences
-        return HStack(spacing: 14) {
-            Label("Finder Drawer", systemImage: "folder.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.primary)
-                .frame(width: 170, alignment: .leading)
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                AppKitSearchField(
-                    text: $search.searchText,
-                    placeholder: "Search files and folders",
-                    focus: $searchFocused,
-                    accessibilityIdentifier: "file-search",
-                    fontSize: 14,
-                    onBeginEditing: { workspace.isSearchPresented = true },
-                    onCommand: handleSearchCommand
-                )
-                if !workspace.search.searchText.isEmpty {
-                    Button { workspace.search.searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                    }.buttonStyle(.plain).help("Clear search")
+    @ViewBuilder private func pane(_ pane: DrawerWorkspace.Pane) -> some View {
+        if let tab = workspace.tab(in: pane) {
+            VStack(spacing: 0) {
+                if workspace.isSplit {
+                    HStack(spacing: 8) {
+                        Circle().fill(workspace.activePane == pane ? Color.accentColor : .clear).frame(width: 6, height: 6)
+                        Image(systemName: tab.symbol)
+                        Text(tab.title).lineLimit(1)
+                        Spacer(minLength: 4)
+                        if tab.browser?.isTransferringFiles == true { ProgressView().controlSize(.mini) }
+                        Button { workspace.focusPane(pane); workspace.closeSplit() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
+                            .buttonStyle(.plain).help("Keep this pane")
+                    }.font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+                        .padding(.horizontal, 12).frame(height: 33)
+                        .background(workspace.activePane == pane ? Color.accentColor.opacity(0.035) : .clear)
+                    Divider()
                 }
-                Text("⌘K").font(.system(size: 11)).foregroundStyle(.tertiary)
+                if let terminal = tab.terminal {
+                    TerminalSurface(session: terminal).id(terminal.id)
+                } else if let browser = tab.browser, browser.currentRoot != nil {
+                    breadcrumbs(browser)
+                    Divider()
+                    BrowserColumnSurface(viewModel: browser, showsItemSizes: workspace.preferences.showItemSizes)
+                } else {
+                    VStack(spacing: 12) {
+                        Image(systemName: "folder").font(.system(size: 32)).foregroundStyle(.secondary)
+                        Text("Choose a folder to get started")
+                        Button("Open Location…") { workspace.focusPane(pane); workspace.beginLocations() }
+                            .buttonStyle(.bordered)
+                    }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
-            .padding(.horizontal, 10)
-            .frame(height: 34)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7))
-            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(.separator.opacity(0.6)))
-            .frame(maxWidth: 560)
-            Spacer(minLength: 0)
-            Button { workspace.perform(.goToFolder) } label: {
-                Image(systemName: "folder.badge.gearshape")
-            }.help("Go to Folder (⇧⌘G)")
-            Menu {
-                Button("Choose Folders…", action: workspace.chooseFolders)
-                Button("Refresh Search Index", action: workspace.index.rebuildIndex)
-                Divider()
-                Toggle("Show Hidden Files", isOn: $preferences.showHiddenFiles)
-                Toggle("Show File Sizes", isOn: $preferences.showItemSizes)
-                Picker("Sort by", selection: $preferences.sortOrder) {
-                    ForEach(BrowserSort.allCases) { Text($0.label).tag($0) }
-                }
-                Divider()
-                Button("Settings…") { workspace.isPreferencesPresented = true }
-            } label: { Image(systemName: "ellipsis.circle") }
-            .menuStyle(.borderlessButton)
-            .frame(width: 24)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(DrawerPaneMarker(pane: pane))
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("drawer-pane-" + pane.rawValue)
         }
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
     }
 
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("FOLDERS")
-                .font(.system(size: 10, weight: .semibold))
+            Text("Favorites")
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 12)
             ScrollView {
                 VStack(spacing: 3) {
+                    location("Home", symbol: "house", url: FileManager.default.homeDirectoryForCurrentUser)
+                    location("Applications", symbol: "square.grid.2x2", url: URL(fileURLWithPath: "/Applications"))
+                    location("Computer", symbol: "desktopcomputer", url: URL(fileURLWithPath: "/"))
+                    location("Volumes", symbol: "externaldrive", url: URL(fileURLWithPath: "/Volumes"))
+                    if !workspace.folders.folders.isEmpty {
+                        Text("Indexed Folders").font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10).padding(.top, 18).padding(.bottom, 5)
+                    }
                     ForEach(workspace.folders.folders, id: \.self) { root in
                         Button { workspace.navigate(to: root) } label: {
                             Label(root.lastPathComponent, systemImage: "folder")
@@ -151,46 +138,80 @@ struct DrawerRootView: View {
                     }
                 }.padding(.horizontal, 8)
             }
-            Spacer(minLength: 0)
             Button(action: workspace.chooseFolders) { Label("Add Folders…", systemImage: "plus") }
                 .buttonStyle(.plain).foregroundStyle(.secondary)
-                .padding(.horizontal, 16).padding(.bottom, 14)
+                .padding(.horizontal, 16).padding(.bottom, 5)
+            Divider().padding(.horizontal, 12)
+            HStack(spacing: 10) {
+                Button { workspace.perform(.settings) } label: { Image(systemName: "gearshape") }
+                    .help("Settings (⌘,)").accessibilityLabel("Settings")
+                Button { workspace.presentActions() } label: { Image(systemName: "slider.horizontal.3") }
+                    .help("Actions (⌘K)").accessibilityLabel("Actions")
+                Button { workspace.beginSearch() } label: { Image(systemName: "magnifyingglass") }
+                    .help("Search Files (⌘F)").accessibilityLabel("Search Files")
+                Spacer()
+            }.buttonStyle(DrawerIconButtonStyle()).padding(.horizontal, 12).padding(.bottom, 10)
         }
         .padding(.top, 18)
         .frame(maxHeight: .infinity)
-        .background(Color(nsColor: .underPageBackgroundColor).opacity(0.45))
+        .background(DrawerSidebarMaterial().ignoresSafeArea(.container, edges: .top))
+    }
+
+    private func location(_ name: String, symbol: String, url: URL) -> some View {
+        Button { workspace.navigate(to: url) } label: {
+            Label(name, systemImage: symbol)
+                .symbolRenderingMode(.hierarchical)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(workspace.browser?.currentRoot?.standardizedFileURL == url.standardizedFileURL
+                            ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
+        }.buttonStyle(.plain).help(url.path)
     }
 
     private var tabBar: some View {
-        HStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 4) {
-                    ForEach(workspace.tabs) { tab in
-                        HStack(spacing: 8) {
-                            Button { workspace.selectTab(tab.id) } label: {
-                                Label(tab.currentRoot?.lastPathComponent ?? "Files", systemImage: "folder")
-                                    .lineLimit(1).frame(minWidth: 80, maxWidth: 170, alignment: .leading)
-                            }
-                            Button { workspace.closeTab(tab.id) } label: {
-                                Image(systemName: "xmark").font(.system(size: 9, weight: .semibold))
-                            }.help("Close tab")
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.horizontal, 10).padding(.vertical, 8)
-                        .background(tab.id == workspace.selectedTabID ? Color(nsColor: .controlBackgroundColor) : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 6))
+        ScrollView(.horizontal) {
+            HStack(spacing: 6) {
+                ForEach(workspace.tabs) { tab in
+                    DrawerTabButton(tab: tab, isSelected: tab.id == workspace.selectedTabID,
+                                    select: { workspace.selectTab(tab.id) }, close: { workspace.closeTab(tab.id) })
+                }
+                HStack(spacing: 3) {
+                    Menu {
+                        Button("New File Tab", action: { workspace.newTab() }).keyboardShortcut("n")
+                        Button("New Terminal Here", action: { workspace.newTerminal() }).keyboardShortcut("t")
+                    } label: {
+                        Image(systemName: "plus").font(.system(size: 15, weight: .medium)).frame(width: 28, height: 30)
                     }
-                }.padding(.horizontal, 8)
-            }.scrollIndicators(.hidden)
-            Button { workspace.newTab() } label: { Image(systemName: "plus") }
-                .buttonStyle(.borderless).help("New Tab (⌘T)").padding(.horizontal, 12)
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("New tab").accessibilityLabel("New Tab")
+                    Divider().frame(height: 14)
+                    Menu {
+                        Button("Split with File Browser") { workspace.splitPane(terminal: false) }
+                        Button("Split with Terminal") { workspace.splitPane(terminal: true) }
+                        if workspace.isSplit {
+                            Divider()
+                            Button("Focus Other Pane") { workspace.perform(.focusOtherPane) }
+                            Button("Single Pane") { workspace.closeSplit() }
+                        }
+                    } label: {
+                        Image(systemName: "rectangle.split.2x1").font(.system(size: 14)).frame(width: 28, height: 30)
+                    }
+                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                    .help("Split View (⌘\\)").accessibilityLabel("Split View")
+                }
+                .padding(.horizontal, 4)
+                .opacity(hoveringTabs ? 1 : 0.55)
+            }.padding(.horizontal, 8)
         }
-        .font(.system(size: 12)).frame(height: 42)
+        .scrollIndicators(.hidden).font(.system(size: 12)).frame(height: 48)
+        .onHover { hoveringTabs = $0 }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hoveringTabs)
     }
 
     private func breadcrumbs(_ browser: BrowserViewModel) -> some View {
         ScrollView(.horizontal) {
             HStack(spacing: 8) {
+                if browser.isTransferringFiles { ProgressView().controlSize(.mini) }
                 Button { browser.goToParent() } label: { Image(systemName: "arrow.up") }
                     .help("Go to parent folder (⌘↑)")
                 ForEach(Array(browser.columns.enumerated()), id: \.element.id) { index, column in
@@ -204,165 +225,4 @@ struct DrawerRootView: View {
         .scrollIndicators(.hidden).font(.system(size: 11)).foregroundStyle(.secondary).frame(height: 33)
     }
 
-    @ViewBuilder private var searchResults: some View {
-        if workspace.search.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            ContentUnavailableView("Search your folders", systemImage: "magnifyingglass",
-                                   description: Text("Type part of a file or folder name. Results come from your selected folders."))
-        } else if workspace.search.results.isEmpty {
-            ContentUnavailableView(workspace.search.isSearching ? "Searching…" : "No matching files",
-                                   systemImage: "magnifyingglass",
-                                   description: Text(workspace.search.isIndexing ? "The index is still being built. Results appear as files are indexed." : "Try a different name or add another folder."))
-        } else {
-            HStack(spacing: 0) {
-                ScrollViewReader { proxy in
-                    List(selection: $workspace.selectedResultID) {
-                        ForEach(workspace.search.results) { result in
-                            HStack(spacing: 10) {
-                                Image(nsImage: NSWorkspace.shared.icon(forFile: result.url.path))
-                                    .resizable().frame(width: 24, height: 24)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(result.displayName).font(.system(size: 13, weight: .medium)).lineLimit(1)
-                                    Text(result.parentPath).font(.system(size: 10)).foregroundStyle(.secondary)
-                                        .lineLimit(1).truncationMode(.middle)
-                                }
-                            }
-                            .padding(.vertical, 3)
-                            .tag(result.id).id(result.id)
-                            .onTapGesture(count: 2) { workspace.reveal(result) }
-                            .contextMenu {
-                                Button("Reveal in Browser") { workspace.reveal(result) }
-                                Button("Open") { workspace.openResult(result) }
-                                Button("Quick Look") { workspace.quickLook.toggle(for: result) }
-                                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([result.url]) }
-                                Button("Copy Path") {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(result.url.path, forType: .string)
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(.inset)
-                    .onChange(of: workspace.selectedResultID) { _, id in if let id { proxy.scrollTo(id) } }
-                }.frame(minWidth: 290, idealWidth: 390, maxWidth: .infinity)
-                Divider()
-                if let result = workspace.selectedResult {
-                    VStack(alignment: .leading, spacing: 12) {
-                        if result.isDirectory {
-                            Image(systemName: "folder.fill").font(.system(size: 70)).foregroundStyle(.tint)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        } else {
-                            FilePreview(url: result.url).frame(maxWidth: .infinity, maxHeight: .infinity)
-                        }
-                        Text(result.displayName).font(.headline).textSelection(.enabled)
-                        Text(result.url.path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                        HStack {
-                            Text(result.kindDescription)
-                            if let size = result.fileSize { Text("• " + ByteCountFormatter.string(fromByteCount: size, countStyle: .file)) }
-                        }.font(.caption).foregroundStyle(.secondary)
-                        HStack {
-                            Button("Reveal in Browser") { workspace.reveal(result) }.buttonStyle(.borderedProminent)
-                            Button("Open") { workspace.openResult(result) }
-                        }
-                    }.padding(18).frame(minWidth: 220, idealWidth: 290, maxWidth: 360)
-                }
-            }
-        }
-    }
-
-    private var footer: some View {
-        HStack(spacing: 8) {
-            if workspace.search.isIndexing { ProgressView().controlSize(.mini) }
-            Text(workspace.search.errorMessage ?? workspace.search.indexStatus)
-                .foregroundStyle(workspace.search.errorMessage == nil ? Color.secondary : .red)
-            Spacer()
-            if workspace.isSearchPresented {
-                Text(workspace.search.resultCountDescription)
-                Text("·  ↵ Reveal  ·  Esc Browse").foregroundStyle(.tertiary)
-            } else if let browser = workspace.browser {
-                Text(browser.focusedSelectionCount > 0 ? "\(browser.focusedSelectionCount) selected" : "Space to Quick Look")
-            }
-        }
-        .font(.system(size: 11)).foregroundStyle(.secondary)
-        .padding(.horizontal, 16).frame(height: 30)
-    }
-
-    private var preferences: some View {
-        @Bindable var preferences = workspace.preferences
-        return VStack(alignment: .leading, spacing: 18) {
-            Text("Finder Drawer Settings").font(.title2.bold())
-            Toggle("Show hidden files while browsing", isOn: $preferences.showHiddenFiles)
-            Toggle("Show file sizes", isOn: $preferences.showItemSizes)
-            Picker("Sort folders by", selection: $preferences.sortOrder) {
-                ForEach(BrowserSort.allCases) { Text($0.label).tag($0) }
-            }
-            Text("Search indexes names in the folders you choose. Hidden files and ignored paths are excluded from search.")
-                .font(.caption).foregroundStyle(.secondary)
-            Text("Show or hide the drawer with ⌃⌥Space, or use its menu bar icon.")
-                .font(.caption).foregroundStyle(.secondary)
-            HStack {
-                Button("Refresh Search Index", action: workspace.index.rebuildIndex)
-                Spacer()
-                Button("Done") { workspace.isPreferencesPresented = false }.keyboardShortcut(.defaultAction)
-            }
-        }.padding(24).frame(width: 430)
-    }
-
-    private func handleSearchCommand(_ command: AppKitSearchField.Command) -> Bool {
-        switch command {
-        case .moveUp: workspace.moveResultSelection(by: -1)
-        case .moveDown: workspace.moveResultSelection(by: 1)
-        case .submit: if let result = workspace.selectedResult { workspace.reveal(result) }
-        case .cancel: workspace.dismissSearch()
-        case .moveLeft, .moveRight, .switchScope: return false
-        }
-        return true
-    }
-}
-
-private struct FilePreview: NSViewRepresentable {
-    let url: URL
-    func makeNSView(context: Context) -> QLPreviewView { QLPreviewView(frame: .zero, style: .normal)! }
-    func updateNSView(_ view: QLPreviewView, context: Context) {
-        if (view.previewItem as? NSURL) != url as NSURL { view.previewItem = url as NSURL }
-    }
-    static func dismantleNSView(_ view: QLPreviewView, coordinator: ()) { view.close() }
-}
-
-private struct FolderPickerView: View {
-    @Bindable var workspace: DrawerWorkspace
-    @State private var query = ""
-    @State private var folders: [URL] = []
-    @State private var selection: URL?
-    @FocusState private var focused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Go to Folder").font(.title2.bold())
-            TextField("Folder name or /absolute/path", text: $query)
-                .textFieldStyle(.roundedBorder).focused($focused)
-                .onSubmit { openSelection() }
-            List(folders, id: \.self, selection: $selection) { folder in
-                Label(folder.path, systemImage: "folder").lineLimit(1).truncationMode(.middle).tag(folder)
-                    .onTapGesture(count: 2) { selection = folder; openSelection() }
-            }.frame(height: 220)
-            HStack {
-                Button("Cancel") { workspace.isFolderPickerPresented = false }.keyboardShortcut(.cancelAction)
-                Spacer()
-                Button("Go", action: openSelection).keyboardShortcut(.defaultAction).disabled(selection == nil)
-            }
-        }.padding(24).frame(width: 520)
-            .onAppear { focused = true }
-            .task(id: query) {
-                let matches = await workspace.index.matchingFolders(for: query)
-                guard !Task.isCancelled else { return }
-                folders = matches
-                selection = matches.first
-            }
-    }
-
-    private func openSelection() {
-        guard let selection else { return }
-        workspace.isFolderPickerPresented = false
-        workspace.navigate(to: selection)
-    }
 }

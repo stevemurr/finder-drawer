@@ -12,12 +12,15 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
     case moveToTrash
     case showInFinder
     case copyPath
+    case copy, cut, paste, moveHere, duplicate, undo, redo
     case goToFolder
     case toggleHiddenFiles
     case newTab
     case closeTab
     case search
     case settings
+    case actions, newTerminal, toggleSidebar, nextTab, previousTab
+    case splitPane, closeSplit, focusOtherPane
 
     var id: Self { self }
 
@@ -34,13 +37,28 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .newFolder: "New Folder"
         case .moveToTrash: "Move to Trash"
         case .showInFinder: "Show in Finder"
+        case .undo: "Undo"
+        case .redo: "Redo"
+        case .copy: "Copy"
+        case .cut: "Cut"
+        case .paste: "Paste"
+        case .moveHere: "Move Item Here"
+        case .duplicate: "Duplicate"
         case .copyPath: "Copy Path"
         case .goToFolder: "Go to Folder…"
         case .toggleHiddenFiles: showHiddenFiles ? "Hide Hidden Files" : "Show Hidden Files"
-        case .newTab: "New Tab"
+        case .newTab: "New File Tab"
         case .closeTab: "Close Tab"
         case .search: "Search Files"
         case .settings: "Settings…"
+        case .splitPane: "Split Right"
+        case .closeSplit: "Single Pane"
+        case .focusOtherPane: "Focus Other Pane"
+        case .actions: "Actions"
+        case .newTerminal: "Open Terminal Here in New Tab"
+        case .toggleSidebar: "Toggle Sidebar"
+        case .nextTab: "Next Tab"
+        case .previousTab: "Previous Tab"
         }
     }
 
@@ -53,6 +71,13 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .newFolder: "folder.badge.plus"
         case .moveToTrash: "trash"
         case .showInFinder: "finder"
+        case .undo: "arrow.uturn.backward"
+        case .redo: "arrow.uturn.forward"
+        case .copy: "doc.on.doc"
+        case .cut: "scissors"
+        case .paste: "doc.on.clipboard"
+        case .moveHere: "arrow.down.doc"
+        case .duplicate: "plus.square.on.square"
         case .copyPath: "doc.on.clipboard"
         case .goToFolder: "arrow.right.circle"
         case .toggleHiddenFiles: "eye.slash"
@@ -60,6 +85,14 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .closeTab: "xmark.rectangle"
         case .search: "magnifyingglass"
         case .settings: "gearshape"
+        case .splitPane: "rectangle.split.2x1"
+        case .closeSplit: "rectangle"
+        case .focusOtherPane: "arrow.left.arrow.right"
+        case .actions: "slider.horizontal.3"
+        case .newTerminal: "terminal"
+        case .toggleSidebar: "sidebar.left"
+        case .nextTab: "arrow.right"
+        case .previousTab: "arrow.left"
         }
     }
 
@@ -101,12 +134,27 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .newFolder: Shortcut(keyCode: 45, character: "N", modifiers: [.command, .shift])
         case .moveToTrash: Shortcut(keyCode: 51, character: "⌫", modifiers: .command)
         case .showInFinder: Shortcut(keyCode: 15, character: "R", modifiers: [.command, .shift])
+        case .undo: Shortcut(keyCode: 6, character: "Z", modifiers: .command)
+        case .redo: Shortcut(keyCode: 6, character: "Z", modifiers: [.command, .shift])
+        case .copy: Shortcut(keyCode: 8, character: "C", modifiers: .command)
+        case .cut: Shortcut(keyCode: 7, character: "X", modifiers: .command)
+        case .paste: Shortcut(keyCode: 9, character: "V", modifiers: .command)
+        case .moveHere: Shortcut(keyCode: 9, character: "V", modifiers: [.command, .option])
+        case .duplicate: Shortcut(keyCode: 2, character: "D", modifiers: .command)
         case .copyPath: Shortcut(keyCode: 8, character: "C", modifiers: [.command, .option])
         case .goToFolder: Shortcut(keyCode: 5, character: "G", modifiers: [.command, .shift])
         case .toggleHiddenFiles: Shortcut(keyCode: 47, character: ".", modifiers: .command)
-        case .newTab: Shortcut(keyCode: 17, character: "T", modifiers: .command)
+        case .newTab: Shortcut(keyCode: 45, character: "N", modifiers: .command)
         case .closeTab: Shortcut(keyCode: 13, character: "W", modifiers: .command)
-        case .search: Shortcut(keyCode: 40, character: "K", modifiers: .command)
+        case .search: Shortcut(keyCode: 3, character: "F", modifiers: .command)
+        case .splitPane: Shortcut(keyCode: 42, character: "\\", modifiers: .command)
+        case .closeSplit: Shortcut(keyCode: 42, character: "\\", modifiers: [.command, .shift])
+        case .focusOtherPane: Shortcut(keyCode: 124, character: "→", modifiers: [.command, .option])
+        case .actions: Shortcut(keyCode: 40, character: "K", modifiers: .command)
+        case .newTerminal: Shortcut(keyCode: 17, character: "T", modifiers: .command)
+        case .toggleSidebar: Shortcut(keyCode: 1, character: "S", modifiers: [.command, .control])
+        case .nextTab: Shortcut(keyCode: 48, character: "⇥", modifiers: .control)
+        case .previousTab: Shortcut(keyCode: 48, character: "⇥", modifiers: [.control, .shift])
         case .settings: Shortcut(keyCode: 43, character: ",", modifiers: .command)
         }
     }
@@ -126,11 +174,16 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
             [Shortcut(keyCode: 76, character: "↵", modifiers: [])]
         case .showInFinder:
             [Shortcut(keyCode: 34, character: "I", modifiers: .command)]
+        case .goToFolder:
+            [Shortcut(keyCode: 31, character: "O", modifiers: [])]
+        case .focusOtherPane:
+            [Shortcut(keyCode: 123, character: "←", modifiers: [.command, .option])]
         case .search:
             [Shortcut(keyCode: 44, character: "/", modifiers: .command)]
-        case .openWith, .newFolder, .moveToTrash, .copyPath, .goToFolder,
+        case .undo, .redo, .copy, .cut, .paste, .moveHere, .duplicate,
+             .openWith, .newFolder, .moveToTrash, .copyPath, .splitPane, .closeSplit,
              .toggleHiddenFiles, .newTab, .closeTab,
-             .settings:
+             .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             []
         }
     }
@@ -167,10 +220,10 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .open, .openWith, .quickLook, .rename:
             .exactlyOne
-        case .moveToTrash, .showInFinder, .copyPath:
+        case .copy, .cut, .duplicate, .moveToTrash, .showInFinder, .copyPath:
             .oneOrMore
-        case .newFolder, .goToFolder, .toggleHiddenFiles,
-             .newTab, .closeTab, .search, .settings:
+        case .undo, .redo, .paste, .moveHere, .newFolder, .goToFolder, .toggleHiddenFiles,
+             .splitPane, .closeSplit, .focusOtherPane, .newTab, .closeTab, .search, .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             .none
         }
     }
@@ -190,6 +243,8 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
     /// separator.
     static let contextMenuOrder: [BrowserCommand?] = [
         .open, .openWith, .quickLook,
+        nil,
+        .copy, .cut, .paste, .moveHere, .duplicate,
         nil,
         .rename, .newFolder, .moveToTrash,
         nil,

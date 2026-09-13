@@ -10,6 +10,10 @@ import Observation
 final class FolderAccessManager {
     private static let pathsKey = "indexedFolderPaths"
 
+    var allowsSystemWideAccess: Bool {
+        didSet { defaults.set(allowsSystemWideAccess, forKey: "browserSystemWideAccess") }
+    }
+
     private(set) var folders: [URL] = []
     private(set) var errorMessage: String?
 
@@ -20,9 +24,13 @@ final class FolderAccessManager {
     init(
         defaults: UserDefaults = .standard,
         loadStoredPaths: Bool = true,
-        initialFolders: [URL] = []
+        initialFolders: [URL] = [],
+        allowsSystemWideAccess: Bool = false
     ) {
         self.defaults = defaults
+        self.allowsSystemWideAccess = loadStoredPaths
+            ? (defaults.object(forKey: "browserSystemWideAccess") as? Bool ?? allowsSystemWideAccess)
+            : allowsSystemWideAccess
         if loadStoredPaths { restoreFolders() }
         folders.append(contentsOf: initialFolders.map(\.standardizedFileURL))
         if !initialFolders.isEmpty { normalizeFolders() }
@@ -35,6 +43,10 @@ final class FolderAccessManager {
 
     /// The configured root containing `url`, if any.
     func writableRoot(containing url: URL) -> URL? {
+        guard url.isFileURL else { return nil }
+        // This is an application policy, not a macOS permission grant. The OS
+        // still enforces TCC, filesystem permissions, and protected volumes.
+        if allowsSystemWideAccess { return URL(fileURLWithPath: "/", isDirectory: true) }
         let path = Self.resolvedPath(url)
         return folders.first { root in
             let rootPath = Self.resolvedPath(root)

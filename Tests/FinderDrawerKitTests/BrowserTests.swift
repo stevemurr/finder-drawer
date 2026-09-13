@@ -728,6 +728,10 @@ final class BrowserViewModelTests: XCTestCase {
         let renamed = root.appendingPathComponent("renamed.txt")
         let destination = root.appendingPathComponent("folder", isDirectory: true)
         viewModel.drop([renamed], into: destination, copy: true)
+        for _ in 0..<200 where viewModel.isTransferringFiles {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertFalse(viewModel.isTransferringFiles)
         XCTAssertEqual(fileSystemChangeCount, 2)
         XCTAssertTrue(FileManager.default.fileExists(
             atPath: destination.appendingPathComponent("renamed.txt").path

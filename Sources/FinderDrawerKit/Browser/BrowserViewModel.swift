@@ -111,6 +111,9 @@ final class BrowserViewModel: Identifiable {
     /// Initial text supplied when the native inline editor begins.
     var renameText = ""
     var errorMessage: String?
+    private(set) var isTransferringFiles = false
+    let fileHistory = BrowserFileHistory()
+    @ObservationIgnored private let clipboard: BrowserFileClipboard
     /// Incremented whenever the selection moved by keyboard or a programmatic
     /// reveal — never by a click. The table scrolls only when this changes, so
     /// clicking cannot move the list out from under the pointer (which is what
@@ -157,11 +160,13 @@ final class BrowserViewModel: Identifiable {
         folderAccess: FolderAccessManager,
         preferences: BrowserPreferences,
         quickLook: QuickLookController,
+        clipboard: BrowserFileClipboard? = nil,
         onFileSystemChange: @escaping () -> Void = {}
     ) {
         self.folderAccess = folderAccess
         self.preferences = preferences
         self.quickLook = quickLook
+        self.clipboard = clipboard ?? BrowserFileClipboard()
         self.onFileSystemChange = onFileSystemChange
         operations = BrowserFileOperations(folderAccess: folderAccess)
     }
@@ -208,7 +213,7 @@ final class BrowserViewModel: Identifiable {
     /// directory if there is one, else the focused column itself.
     var activeDirectory: URL? {
         guard columns.indices.contains(focusedColumnIndex) else { return nil }
-        if let selected = columns[focusedColumnIndex].selectedEntry, selected.isDirectory {
+        if focusedSelectionCount == 1, let selected = columns[focusedColumnIndex].selectedEntry, selected.isDirectory {
             return selected.url
         }
         return columns[focusedColumnIndex].url
@@ -424,12 +429,23 @@ final class BrowserViewModel: Identifiable {
             trashSelection()
         case .showInFinder:
             revealSelection()
+        case .undo, .redo:
+            do {
+                if command == .undo { try fileHistory.undo() } else { try fileHistory.redo() }
+            } catch { errorMessage = error.localizedDescription }
+            onFileSystemChange()
+            reloadAllColumns()
+        case .copy: clipboard.write(focusedEntries.map(\.url))
+        case .cut: clipboard.write(focusedEntries.map(\.url), cut: true)
+        case .paste: pasteFiles(move: clipboard.isCut)
+        case .moveHere: pasteFiles(move: true)
+        case .duplicate: transferFiles(focusedEntries.map(\.url), to: nil, mode: .duplicate)
         case .copyPath:
             copySelectedPaths()
         case .toggleHiddenFiles:
             preferences.showHiddenFiles.toggle()
-        case .openWith, .goToFolder, .newTab, .closeTab,
-             .search, .settings:
+        case .splitPane, .closeSplit, .focusOtherPane, .openWith, .goToFolder, .newTab, .closeTab,
+             .search, .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             onHostCommand?(command)
         }
     }
@@ -437,12 +453,17 @@ final class BrowserViewModel: Identifiable {
     func requestColumnFocus() { onRequestColumnFocus?() }
 
     func title(for command: BrowserCommand) -> String {
+        if command == .undo { return fileHistory.undoTitle }
+        if command == .redo { return fileHistory.redoTitle }
         if focusedSelectionCount > 1 {
             switch command {
             case .moveToTrash:
                 return "Move \(focusedSelectionCount) Items to Trash"
             case .showInFinder:
                 return "Show \(focusedSelectionCount) Items in Finder"
+            case .copy: return "Copy \(focusedSelectionCount) Items"
+            case .cut: return "Cut \(focusedSelectionCount) Items"
+            case .duplicate: return "Duplicate \(focusedSelectionCount) Items"
             case .copyPath:
                 return "Copy \(focusedSelectionCount) Paths"
             default:
@@ -453,7 +474,22 @@ final class BrowserViewModel: Identifiable {
     }
 
     func canPerform(_ command: BrowserCommand) -> Bool {
-        command.selectionRequirement.isSatisfied(by: focusedSelectionCount)
+        guard command.selectionRequirement.isSatisfied(by: focusedSelectionCount) else { return false }
+        switch command {
+        case .undo: return !isTransferringFiles && fileHistory.canUndo
+        case .redo: return !isTransferringFiles && fileHistory.canRedo
+        case .paste, .moveHere:
+            guard !isTransferringFiles, let directory = activeDirectory, folderAccess.canWrite(to: directory),
+                  !clipboard.urls.isEmpty else { return false }
+            return command != .moveHere && !clipboard.isCut || clipboard.urls.allSatisfy { folderAccess.canWrite(to: $0) }
+        case .cut, .rename, .moveToTrash:
+            return !isTransferringFiles && focusedEntries.allSatisfy { folderAccess.canWrite(to: $0.url) }
+        case .duplicate:
+            return !isTransferringFiles && focusedEntries.allSatisfy { folderAccess.canWrite(to: $0.url.deletingLastPathComponent()) }
+        case .newFolder:
+            return !isTransferringFiles && activeDirectory.map { folderAccess.canWrite(to: $0) } == true
+        default: return true
+        }
     }
 
     /// Re-lists every open column and hands keyboard focus back to it.
@@ -500,6 +536,7 @@ final class BrowserViewModel: Identifiable {
             // is not a filesystem mutation and must not reload the table or
             // descend into a selected folder.
             guard renamed.standardizedFileURL != url.standardizedFileURL else { return }
+            fileHistory.record("Rename", undo: [.init(source: renamed, destination: url)])
             onFileSystemChange()
             let parent = url.deletingLastPathComponent()
             // Re-select after the reload lands, so the user does not lose their
@@ -526,6 +563,7 @@ final class BrowserViewModel: Identifiable {
         let selectionRevisionAtCreation = selectionIntentRevision
         do {
             let created = try operations.newFolder(in: directory)
+            fileHistory.record("New Folder", undo: [.init(source: created, destination: nil)])
             onFileSystemChange()
             // Publish the rename target before the async reload. Once the new
             // row lands, the table can enter editing on that same update
@@ -568,31 +606,87 @@ final class BrowserViewModel: Identifiable {
         let parent = last.url.deletingLastPathComponent()
         // Pick the survivor to land on before the rows disappear.
         let successor = neighbourID(after: last, in: focusedColumnIndex, skipping: Set(doomed.map(\.id)))
+        var undoSteps: [BrowserFileHistory.Step] = []
+        defer {
+            fileHistory.record("Move to Trash", undo: undoSteps)
+        }
         do {
-            try operations.trash(doomed.map(\.url))
+            try operations.trash(doomed.map(\.url)) { source, destination in
+                undoSteps.append(.init(source: destination, destination: source))
+            }
             onFileSystemChange()
             reloadColumn(at: parent) { [weak self] in
                 guard let self, let index = self.columns.firstIndex(where: { $0.url == parent }) else { return }
                 self.select(successor ?? self.columns[index].entries.first?.id, inColumn: index)
             }
         } catch {
+            if !undoSteps.isEmpty { onFileSystemChange(); reloadAllColumns() }
             errorMessage = error.localizedDescription
         }
     }
 
+    private func pasteFiles(move: Bool) {
+        guard let directory = activeDirectory else { return }
+        transferFiles(clipboard.urls, to: directory, mode: move ? .move : .copy,
+                      clipboardChangeCount: move ? clipboard.pasteboard.changeCount : nil)
+    }
+
+    /// Copies and moves can be large. Keep the UI responsive and use the captured
+    /// destination even if the user changes selection while disk work is running.
+    private func transferFiles(_ urls: [URL], to directory: URL?, mode: BrowserTransferPlan.Mode,
+                               clipboardChangeCount: Int? = nil, allowsCopyFallback: Bool = false) {
+        guard !isTransferringFiles, !urls.isEmpty else { return }
+        do {
+            let plan = try operations.prepareTransfer(urls, to: directory, mode: mode,
+                                                      allowsCopyFallback: allowsCopyFallback)
+            guard !plan.items.isEmpty else { return }
+            isTransferringFiles = true
+            let selectionRevision = selectionIntentRevision
+            let columnIdentity = columns.first?.instanceID
+            Task { [self] in
+                let result = await Task.detached(priority: .userInitiated) { Result { try plan.execute() } }.value
+                isTransferringFiles = false
+                let completed: [BrowserTransferPlan.Item]
+                switch result {
+                case .success: completed = plan.items
+                case .failure(let error):
+                    completed = (error as? BrowserTransferFailure)?.completed ?? []
+                    errorMessage = error.localizedDescription
+                }
+                let name = mode == .move ? "Move" : mode == .duplicate ? "Duplicate" : "Paste"
+                fileHistory.record(name, undo: completed.reversed().map {
+                    .init(source: $0.destination, destination: $0.movesSource ? $0.source : nil)
+                })
+                if let clipboardChangeCount, !completed.isEmpty {
+                    let moved = Dictionary(uniqueKeysWithValues: completed.filter(\.movesSource).map {
+                        ($0.source.standardizedFileURL.path, $0.destination)
+                    })
+                    let updated = urls.map { moved[$0.standardizedFileURL.path] ?? $0 }
+                    if clipboard.pasteboard.changeCount == clipboardChangeCount {
+                        clipboard.write(updated, cut: completed.count != plan.items.count)
+                    }
+                }
+                // Refresh even after a partial failure: the completed items are real.
+                onFileSystemChange()
+                reloadAllColumns()
+                guard let target = completed.first?.destination.deletingLastPathComponent() else { return }
+                reloadColumn(at: target) { [weak self] in
+                    guard let self, self.selectionIntentRevision == selectionRevision,
+                          self.columns.first?.instanceID == columnIdentity,
+                          let index = self.columns.firstIndex(where: { $0.url.standardizedFileURL.path == target.standardizedFileURL.path }) else { return }
+                    let paths = Set(completed.map { $0.destination.standardizedFileURL.path })
+                    let ids = self.columns[index].entries.filter { paths.contains($0.url.standardizedFileURL.path) }.map(\.id)
+                    self.applySelection(ids: Set(ids), primary: ids.first, inColumn: index, descendsIntoDirectories: false)
+                    self.scrollToSelectionToken += 1
+                    self.requestColumnFocus()
+                }
+            }
+        } catch { errorMessage = error.localizedDescription }
+    }
+
     /// Drag-and-drop landing point. `copy` mirrors holding ⌥ during the drag.
     func drop(_ urls: [URL], into directory: URL, copy: Bool) {
-        do {
-            _ = copy ? try operations.copy(urls, to: directory) : try operations.move(urls, to: directory)
-            onFileSystemChange()
-            reloadColumn(at: directory)
-            // A move empties the source directory too.
-            for source in Set(urls.map { $0.deletingLastPathComponent() }) where !copy {
-                reloadColumn(at: source)
-            }
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        transferFiles(urls, to: directory, mode: copy ? .copy : .move, allowsCopyFallback: true)
     }
 
     /// Navigates to a location, opening the columns down to it and leaving it

@@ -125,8 +125,8 @@ struct BrowserColumnContentView: View {
                 style: style,
                 accessibilityPrefix: accessibilityPrefix
             )
-            .opacity(column.presentationState == .content ? 1 : 0)
-            .allowsHitTesting(column.presentationState == .content)
+            .opacity(column.presentationState == .content || column.presentationState == .empty ? 1 : 0)
+            .allowsHitTesting(column.presentationState == .content || column.presentationState == .empty)
 
             switch column.presentationState {
             case .content:
@@ -149,6 +149,7 @@ struct BrowserColumnContentView: View {
                     style: style,
                     retry: nil
                 )
+                .allowsHitTesting(false)
             case let .error(message):
                 BrowserColumnStatusView(
                     kind: .error,

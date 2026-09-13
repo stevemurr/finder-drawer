@@ -34,8 +34,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
                 drawer = try FinderDrawerController(databaseURL: root.appendingPathComponent(".drawer-index.sqlite3"),
                                                      defaults: defaults, initialFolders: [root], restoresFolders: false)
             } else {
-                drawer = try FinderDrawerController()
+                drawer = try FinderDrawerController(allowsSystemWideAccess: true)
             }
+            drawer?.onVisibilityChange = { [weak self] in
+                if self?.drawer?.hasVisibleWindows == false { NSApp.setActivationPolicy(.accessory) }
+            }
+            drawer?.onShortcutChange = { [weak self] in self?.registerHotKey() }
             installStatusItem()
             installHotKey()
             drawer?.show()
@@ -58,6 +62,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         drawer?.show(); return true
     }
 
+    @objc private func showSettings() { drawer?.showSettings() }
     @objc private func toggleDrawer() { drawer?.toggle() }
     @objc private func chooseFolders() { drawer?.chooseFolders() }
     @objc private func searchFiles() { drawer?.search() }
@@ -66,9 +71,10 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.button?.image = NSImage(systemSymbolName: "folder", accessibilityDescription: "Finder Drawer")
         let menu = NSMenu()
-        for (title, action) in [("Show / Hide Drawer  ⌃⌥Space", #selector(toggleDrawer)),
+        for (title, action) in [("Show / Hide Drawer", #selector(toggleDrawer)),
                                 ("Search Files…", #selector(searchFiles)),
-                                ("Choose Folders…", #selector(chooseFolders))] {
+                                ("Choose Folders…", #selector(chooseFolders)),
+                                ("Settings…", #selector(showSettings))] {
             let entry = menu.addItem(withTitle: title, action: action, keyEquivalent: "")
             entry.target = self
         }
@@ -81,16 +87,52 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     private func installMenu() {
         let menu = NSMenu()
         let appMenu = NSMenu()
+        let settings = appMenu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: ",")
+        settings.target = self
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Finder Drawer", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         let appItem = NSMenuItem(); appItem.submenu = appMenu; menu.addItem(appItem)
+        let file = NSMenu(title: "File")
+        for (title, action, key, modifiers) in [
+            ("New Folder", "newFolder:", "n", NSEvent.ModifierFlags([.command, .shift])),
+            ("Duplicate", "duplicate:", "d", .command),
+            ("Rename", "renameFile:", "", []),
+            ("Move to Trash", "moveToTrash:", "\u{8}", .command),
+        ] {
+            let item = file.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
+            item.keyEquivalentModifierMask = modifiers
+        }
+        file.addItem(.separator())
+        file.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        let fileItem = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
+        fileItem.submenu = file
+        menu.addItem(fileItem)
         let edit = NSMenu(title: "Edit")
         for (title, action, key) in [("Undo", "undo:", "z"), ("Cut", "cut:", "x"),
                                      ("Copy", "copy:", "c"), ("Paste", "paste:", "v"),
                                      ("Select All", "selectAll:", "a")] {
             edit.addItem(withTitle: title, action: Selector(action), keyEquivalent: key)
         }
+        let redo = edit.insertItem(withTitle: "Redo", action: Selector("redo:"), keyEquivalent: "z", at: 1)
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(.separator())
+        let moveHere = edit.addItem(withTitle: "Move Item Here", action: Selector("moveHere:"), keyEquivalent: "v")
+        moveHere.keyEquivalentModifierMask = [.command, .option]
+        let copyPath = edit.addItem(withTitle: "Copy Path", action: Selector("copyPath:"), keyEquivalent: "c")
+        copyPath.keyEquivalentModifierMask = [.command, .option]
         let editItem = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         editItem.submenu = edit; menu.addItem(editItem)
+        let windows = NSMenu(title: "Window")
+        windows.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windows.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        let fullScreen = windows.addItem(withTitle: "Enter Full Screen", action: #selector(NSWindow.toggleFullScreen(_:)), keyEquivalent: "f")
+        fullScreen.keyEquivalentModifierMask = [.control, .command]
+        windows.addItem(.separator())
+        windows.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        let windowItem = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
+        windowItem.submenu = windows
+        menu.addItem(windowItem)
+        NSApp.windowsMenu = windows
         NSApp.mainMenu = menu
     }
 
@@ -104,15 +146,20 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             return noErr
         }, 1, &event, userData, &eventHandler)
-        guard installed == noErr else { return }
-        let identifier = EventHotKeyID(signature: 0x46445257, id: 1)
-        let result = RegisterEventHotKey(UInt32(kVK_Space), UInt32(controlKey | optionKey),
-                                        identifier, GetApplicationEventTarget(), 0, &hotKey)
-        if result != noErr {
-            let alert = NSAlert()
-            alert.messageText = "The drawer shortcut is unavailable"
-            alert.informativeText = "Another app may already use Control–Option–Space. You can still open Finder Drawer from its menu bar icon."
-            alert.runModal()
+        guard installed == noErr else {
+            drawer?.setShortcutError("Couldn’t listen for the shortcut. Use the menu bar to open the drawer.")
+            return
         }
+        registerHotKey()
+    }
+
+    private func registerHotKey() {
+        guard eventHandler != nil, let drawer else { return }
+        if let hotKey { UnregisterEventHotKey(hotKey); self.hotKey = nil }
+        guard !drawer.isRecordingShortcut else { return }
+        let identifier = EventHotKeyID(signature: 0x46445257, id: 1)
+        let result = RegisterEventHotKey(drawer.shortcut.keyCode, drawer.shortcut.carbonModifiers,
+                                        identifier, GetApplicationEventTarget(), 0, &hotKey)
+        drawer.setShortcutError(result == noErr ? nil : "\(drawer.shortcut.label) is unavailable. Choose another shortcut or use the menu bar.")
     }
 }

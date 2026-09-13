@@ -66,6 +66,7 @@ struct AppKitSearchField: NSViewRepresentable {
     func updateNSView(_ field: NSTextField, context: Context) {
         context.coordinator.parent = self
         if field.stringValue != text { field.stringValue = text }
+        field.placeholderString = placeholder
         if field.accessibilityIdentifier() != accessibilityIdentifier {
             field.setAccessibilityIdentifier(accessibilityIdentifier)
         }

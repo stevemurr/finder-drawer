@@ -8,8 +8,9 @@ let package = Package(
         .library(name: "FinderDrawerKit", targets: ["FinderDrawerKit"]),
         .executable(name: "FinderDrawer", targets: ["FinderDrawer"]),
     ],
+    dependencies: [.package(url: "https://github.com/migueldeicaza/SwiftTerm.git", exact: "1.20.0")],
     targets: [
-        .target(name: "FinderDrawerKit", linkerSettings: [.linkedLibrary("sqlite3")]),
+        .target(name: "FinderDrawerKit", dependencies: [.product(name: "SwiftTerm", package: "SwiftTerm")], linkerSettings: [.linkedLibrary("sqlite3")]),
         .executableTarget(name: "FinderDrawer", dependencies: ["FinderDrawerKit"]),
         .testTarget(name: "FinderDrawerKitTests", dependencies: ["FinderDrawerKit"]),
     ],

@@ -457,8 +457,8 @@ struct BrowserColumnTableView: NSViewRepresentable {
         }
 
         private func emptySpaceMenu() -> NSMenu {
-            parent.viewModel.focusColumn(at: parent.index)
-            return buildMenu([.newFolder, .goToFolder, nil, .toggleHiddenFiles])
+            parent.viewModel.select(nil, inColumn: parent.index)
+            return buildMenu([.paste, .moveHere, nil, .newFolder, .goToFolder, nil, .toggleHiddenFiles])
         }
 
         private func buildMenu(_ commands: [BrowserCommand?]) -> NSMenu {
@@ -560,6 +560,35 @@ struct BrowserColumnTableView: NSViewRepresentable {
 @MainActor
 final class FileColumnTableView: NSTableView {
     weak var coordinator: BrowserColumnTableView.Coordinator?
+
+    private var browser: BrowserViewModel? { coordinator?.parent.viewModel }
+
+    @objc func undo(_ sender: Any?) { browser?.perform(.undo) }
+    @objc func redo(_ sender: Any?) { browser?.perform(.redo) }
+    @objc func copy(_ sender: Any?) { browser?.perform(.copy) }
+    @objc func cut(_ sender: Any?) { browser?.perform(.cut) }
+    @objc func paste(_ sender: Any?) { browser?.perform(.paste) }
+    @objc func moveHere(_ sender: Any?) { browser?.perform(.moveHere) }
+    @objc func duplicate(_ sender: Any?) { browser?.perform(.duplicate) }
+    @objc func newFolder(_ sender: Any?) { browser?.perform(.newFolder) }
+    @objc func renameFile(_ sender: Any?) { browser?.perform(.rename) }
+    @objc func moveToTrash(_ sender: Any?) { browser?.perform(.moveToTrash) }
+    @objc func copyPath(_ sender: Any?) { browser?.perform(.copyPath) }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        let commands: [Selector: BrowserCommand] = [
+            #selector(undo(_:)): .undo, #selector(redo(_:)): .redo,
+            #selector(copy(_:)): .copy, #selector(cut(_:)): .cut, #selector(paste(_:)): .paste,
+            #selector(moveHere(_:)): .moveHere, #selector(duplicate(_:)): .duplicate,
+            #selector(newFolder(_:)): .newFolder, #selector(renameFile(_:)): .rename,
+            #selector(moveToTrash(_:)): .moveToTrash, #selector(copyPath(_:)): .copyPath,
+        ]
+        if let action = item.action, let command = commands[action] {
+            if let menuItem = item as? NSMenuItem { menuItem.title = browser?.title(for: command) ?? command.title }
+            return browser?.canPerform(command) == true
+        }
+        return super.validateUserInterfaceItem(item)
+    }
 
     var surfaceStyle: BrowserColumnSurfaceStyle = .standard {
         didSet {
