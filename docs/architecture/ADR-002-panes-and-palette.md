@@ -1,5 +1,7 @@
 # Shared tabs, two visible panes, and one palette
 
+The pane-assignment decision is superseded by [ADR-003](ADR-003-persistent-tab-pairs.md). Palette behavior remains in effect.
+
 ## Context
 
 File management needs two independently navigable locations, including terminals, while retaining existing tab sessions and clipboard behavior. Search and location entry should not reflow the file browser or open a separate sheet.

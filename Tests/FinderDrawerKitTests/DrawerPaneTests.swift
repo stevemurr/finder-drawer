@@ -47,9 +47,11 @@ final class DrawerPaneTests: XCTestCase {
         XCTAssertEqual(workspace.tab(in: .primary)?.id, first)
         XCTAssertTrue(workspace.tab(in: .secondary)?.terminal === shell)
         workspace.selectTab(first)
-        XCTAssertEqual(workspace.tab(in: .secondary)?.id, first)
-        XCTAssertTrue(workspace.tab(in: .primary)?.terminal === shell)
-        workspace.focusPane(.primary)
+        XCTAssertEqual(workspace.tab(in: .primary)?.id, first)
+        XCTAssertTrue(workspace.tab(in: .secondary)?.terminal === shell)
+        XCTAssertEqual(workspace.activePane, .primary)
+        workspace.closeSplit()
+        workspace.selectTab(shell.id)
         workspace.splitPane(terminal: true)
         let secondShell = try XCTUnwrap(workspace.terminal)
         XCTAssertFalse(secondShell === shell)
@@ -70,14 +72,18 @@ final class DrawerPaneTests: XCTestCase {
         XCTAssertEqual(workspace.activePane, .primary)
     }
 
-    func testNewTabReplacesOnlyActivePane() throws {
+    func testNewTabOpensSingleAndPreservesThePair() throws {
         workspace.splitPane(terminal: true)
         let left = workspace.tab(in: .primary)?.id
         let oldRight = workspace.tab(in: .secondary)?.id
+        let pair = try XCTUnwrap(workspace.selectedGroupID)
         workspace.newTab(at: root)
-        XCTAssertEqual(workspace.tab(in: .primary)?.id, left)
-        XCTAssertNotEqual(workspace.tab(in: .secondary)?.id, oldRight)
+        XCTAssertFalse(workspace.isSplit)
+        XCTAssertEqual(workspace.tabGroups.count, 2)
         XCTAssertTrue(workspace.tabs.contains { $0.id == oldRight })
+        workspace.selectGroup(pair)
+        XCTAssertEqual(workspace.tab(in: .primary)?.id, left)
+        XCTAssertEqual(workspace.tab(in: .secondary)?.id, oldRight)
     }
 
     func testSplitAssignmentAndActivePaneRestore() throws {
@@ -232,5 +238,40 @@ final class DrawerPaneTests: XCTestCase {
             try await Task.sleep(for: .milliseconds(10))
         }
         XCTFail("Timed out")
+    }
+
+    /// With Metal on, a click lands on SwiftTerm's MTKView, which never takes
+    /// first responder: in a split, the other terminal kept the keyboard.
+    func testClickingASplitTerminalGivesItTheKeyboard() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 400), styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let sessions = [TerminalSession(directory: root), TerminalSession(directory: root)]
+        defer { sessions.forEach { $0.stop() } }
+        let views = sessions.enumerated().map { index, session in
+            session.setUsesGPU(true)
+            let view = session.makeView()
+            view.frame = NSRect(x: CGFloat(index) * 500, y: 0, width: 500, height: 400)
+            window.contentView?.addSubview(view)
+            return view
+        }
+        guard views.allSatisfy(\.isUsingMetalRenderer) else { throw XCTSkip("Metal renderer unavailable") }
+
+        for (target, other) in [(views[0], views[1]), (views[1], views[0])] {
+            window.makeFirstResponder(other)
+            let point = target.convert(NSPoint(x: target.bounds.midX, y: target.bounds.midY), to: nil)
+            // A test window is never key, so `sendEvent` would not deliver the
+            // click; hand it to whatever the click actually hits instead.
+            let content = try XCTUnwrap(window.contentView)
+            let hit = try XCTUnwrap(content.hitTest(content.convert(point, from: nil)))
+            XCTAssertTrue(hit !== target && hit.isDescendant(of: target), "the click lands on a renderer subview")
+            let event = try XCTUnwrap(NSEvent.mouseEvent(
+                with: .leftMouseDown, location: point, modifierFlags: [], timestamp: 0,
+                windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
+            hit.mouseDown(with: event)
+            XCTAssertTrue(window.firstResponder === target, "the clicked terminal must take the keyboard")
+        }
     }
 }

@@ -27,6 +27,30 @@ final class DirectoryListerTests: XCTestCase {
         XCTAssertTrue(entries[0].isDirectory)
     }
 
+    /// Kind text and column width are resolved beside the directory read, so
+    /// neither a row configure nor a landing listing does that work on main.
+    func testListingCarriesKindDescriptionsAndMeasuredWidth() async throws {
+        try write("notes.txt")
+        try makeDirectory("folder")
+
+        let listing = try await DirectoryLister().listing(of: root, showHidden: false, sort: .name)
+
+        XCTAssertEqual(listing.entries.map(\.displayName), ["folder", "notes.txt"])
+        let file = try XCTUnwrap(listing.entries.last)
+        XCTAssertEqual(file.kindDescription, file.contentType?.localizedDescription)
+        let expectedWidth = await MainActor.run { BrowserColumnSizing.naturalWidth(entries: listing.entries) }
+        XCTAssertEqual(listing.naturalWidth, expectedWidth)
+    }
+
+    func testKindSortUsesStoredDescriptions() async throws {
+        for name in ["b.txt", "a.png", "c.txt"] { try write(name) }
+
+        let entries = try await DirectoryLister().contents(of: root, showHidden: false, sort: .kind)
+
+        let kinds = entries.map(\.kindDescription)
+        XCTAssertEqual(kinds, kinds.sorted { $0.localizedStandardCompare($1) == .orderedAscending })
+    }
+
     func testNamesSortNaturallyRatherThanLexically() async throws {
         for name in ["file10.txt", "file2.txt", "file1.txt"] { try write(name) }
 

@@ -48,7 +48,7 @@ struct DrawerSearchResultsView: View {
             workspace.selectedResultID = result.id
         } label: {
             HStack(spacing: 10) {
-                Image(nsImage: NSWorkspace.shared.icon(forFile: result.url.path))
+                Image(nsImage: FileIconCache.icon(for: result))
                     .resizable().scaledToFit().frame(width: 24, height: 24)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(result.displayName).font(.system(size: 13, weight: .medium))

@@ -256,10 +256,11 @@ final class BrowserClipboardTests: XCTestCase {
     }
 
     func testShortcutsMatchExpectedFileCommands() {
-        for (key, command) in [(UInt16(8), BrowserCommand.copy), (7, .cut), (9, .paste), (2, .duplicate), (6, .undo)] {
+        for (key, command) in [(UInt16(8), BrowserCommand.copy), (7, .cut), (9, .paste), (6, .undo)] {
             XCTAssertEqual(BrowserCommand.matching(keyCode: key, modifiers: .command), command)
         }
         XCTAssertEqual(BrowserCommand.matching(keyCode: 9, modifiers: [.command, .option]), .moveHere)
+        XCTAssertEqual(BrowserCommand.matching(keyCode: 2, modifiers: [.command, .shift]), .duplicate)
         XCTAssertEqual(BrowserCommand.matching(keyCode: 6, modifiers: [.command, .shift]), .redo)
     }
 

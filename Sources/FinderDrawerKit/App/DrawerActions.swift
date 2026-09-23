@@ -61,8 +61,9 @@ extension DrawerWorkspace {
         }
         add("terminal", "Open Terminal Here in New Tab", "terminal", BrowserCommand.newTerminal.shortcutDescription) { [weak self] in self?.newTerminal(at: directory) }
         add("files", "Open Folder in New Tab", "folder.badge.plus", BrowserCommand.newTab.shortcutDescription) { [weak self] in self?.newTab(at: directory) }
-        for command in [BrowserCommand.search, .goToFolder, .splitPane, .closeSplit, .focusOtherPane, .toggleSidebar, .nextTab, .previousTab, .closeTab, .settings] {
+        for command in [BrowserCommand.search, .goToFolder, .splitTerminal, .splitFiles, .splitPane, .closeSplit, .focusOtherPane, .toggleSidebar, .nextTab, .previousTab, .closeTab, .settings] {
             if [.closeSplit, .focusOtherPane].contains(command) && !isSplit { continue }
+            if [.splitPane, .splitTerminal, .splitFiles].contains(command) && isSplit { continue }
             add(command.rawValue, command.title, command.symbol, command.shortcutDescription) { [weak self] in self?.perform(command) }
         }
         contextActions = actions

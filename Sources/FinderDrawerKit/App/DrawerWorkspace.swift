@@ -11,14 +11,14 @@ final class DrawerWorkspace {
     let search: FileSearchModel
     let quickLook = QuickLookController()
     private(set) var tabs: [DrawerTab] = []
+    private(set) var tabGroups: [DrawerTabGroup] = []
+    private(set) var selectedGroupID: UUID?
     enum Pane: String { case primary, secondary }
-    private(set) var primaryTabID: UUID?
-    private(set) var secondaryTabID: UUID?
-    private(set) var activePane: Pane = .primary
-    private(set) var selectedTabID: UUID? {
-        get { activePane == .secondary ? secondaryTabID ?? primaryTabID : primaryTabID }
-        set { if activePane == .secondary { secondaryTabID = newValue } else { primaryTabID = newValue } }
-    }
+    var selectedGroup: DrawerTabGroup? { tabGroups.first { $0.id == selectedGroupID } }
+    var primaryTabID: UUID? { selectedGroup?.primaryID }
+    var secondaryTabID: UUID? { selectedGroup?.secondaryID }
+    var activePane: Pane { secondaryTabID != nil && selectedTabID == secondaryTabID ? .secondary : .primary }
+    var selectedTabID: UUID? { selectedGroup?.focusedID }
     var isSplit: Bool { secondaryTabID != nil }
     var toolbarLeadingWidth: CGFloat = 132
     static let sidebarWidth: CGFloat = 220
@@ -38,6 +38,7 @@ final class DrawerWorkspace {
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private var isStopped = false
+    @ObservationIgnored private var isRestoringTabs = true
     @ObservationIgnored var onRequestActionFocus: (() -> Void)?
     @ObservationIgnored var onRequestColumnFocus: (() -> Void)?
     @ObservationIgnored var onShowSettings: (() -> Void)?
@@ -66,26 +67,44 @@ final class DrawerWorkspace {
         let restoredPrimary = defaults.integer(forKey: "drawerPrimaryTab")
         let restoredActivePane = defaults.string(forKey: "drawerActivePane")
         let restoredSelection = defaults.integer(forKey: savedTabs == nil ? "selectedBrowserTab" : "selectedDrawerTab")
+        let savedGroups = restoresFolders ? defaults.data(forKey: "drawerTabGroups").flatMap {
+            try? JSONDecoder().decode([SavedDrawerTabGroup].self, from: $0)
+        } : nil
+        let restoredGroupIndex = defaults.integer(forKey: "selectedDrawerGroup")
+        var restoredIDs: [Int: UUID] = [:]
         if let savedTabs {
-            for tab in savedTabs.prefix(20) {
+            for (index, tab) in savedTabs.prefix(100).enumerated() {
                 let root = URL(fileURLWithPath: tab.path, isDirectory: true)
-                guard FileManager.default.isReadableFile(atPath: root.path) else { continue }
+                guard FileManager.default.isReadableFile(atPath: root.path),
+                      (try? root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
                 if tab.kind == .terminal { newTerminal(at: root) }
                 else { newTab(at: root) }
+                restoredIDs[index] = selectedTabID
             }
         } else {
-            for root in restored.prefix(20) { newTab(at: root) }
+            for (index, root) in restored.prefix(100).enumerated() {
+                newTab(at: root)
+                restoredIDs[index] = selectedTabID
+            }
         }
         if tabs.isEmpty { newTab(at: defaultLocation) }
-        if let tab = tabs[safe: restoredSelection] {
-            selectedTabID = tab.id
+        if let savedGroups {
+            restoreGroups(savedGroups, selectedIndex: restoredGroupIndex, restoredIDs: restoredIDs)
+        } else {
+            if let id = restoredIDs[restoredSelection] { selectTab(id) }
+            // Migrate the previously visible split to a persistent pair.
+            if let restoredSecondary, let secondary = restoredIDs[restoredSecondary],
+               let primary = restoredIDs[restoredPrimary], primary != secondary,
+               let index = tabGroups.firstIndex(where: { $0.primaryID == primary }) {
+                tabGroups[index].secondaryID = secondary
+                tabGroups[index].focusedID = restoredActivePane == Pane.secondary.rawValue ? secondary : primary
+                selectedGroupID = tabGroups[index].id
+                tabGroups.removeAll { $0.primaryID == secondary }
+            }
         }
-        if let restoredSecondary, let secondary = tabs[safe: restoredSecondary],
-           let primary = tabs[safe: restoredPrimary], primary.id != secondary.id {
-            primaryTabID = primary.id
-            secondaryTabID = secondary.id
-            activePane = restoredActivePane == Pane.secondary.rawValue ? .secondary : .primary
-        }
+        preferences.onTerminalThemeChange = { [weak self] in self?.applyTerminalThemes() }
+        applyTerminalThemes()
+        isRestoringTabs = false
         persistTabs()
     }
 
@@ -108,6 +127,8 @@ final class DrawerWorkspace {
         quickLook.close()
         for tab in tabs { tab.terminal?.stop() }
         tabs.removeAll()
+        tabGroups.removeAll()
+        selectedGroupID = nil
     }
 
     func newTab(at root: URL? = nil) {
@@ -138,7 +159,7 @@ final class DrawerWorkspace {
         }
         let destination = root ?? self.browser?.currentRoot ?? defaultLocation
         tabs.append(DrawerTab(browser: browser))
-        selectedTabID = browser.id
+        appendSingleGroup(for: browser.id)
         if let destination { browser.setRoot(destination); locations.remember(destination) }
         persistTabs()
     }
@@ -151,8 +172,10 @@ final class DrawerWorkspace {
             return
         }
         let session = TerminalSession(directory: directory)
+        session.setThemes(light: preferences.lightTerminalTheme, dark: preferences.darkTerminalTheme)
+        session.setUsesGPU(preferences.terminalUsesGPU)
         tabs.append(DrawerTab(terminal: session))
-        selectedTabID = session.id
+        appendSingleGroup(for: session.id)
         dismissPalette()
         persistTabs()
     }
@@ -164,21 +187,76 @@ final class DrawerWorkspace {
         return terminal?.directory ?? browser?.activeDirectory ?? defaultLocation ?? FileManager.default.homeDirectoryForCurrentUser
     }
 
+    private func appendSingleGroup(for tabID: UUID) {
+        let group = DrawerTabGroup(primaryID: tabID)
+        tabGroups.append(group)
+        selectedGroupID = group.id
+    }
+
     func cycleTab(by offset: Int) {
-        guard !tabs.isEmpty else { return }
-        let current = tabs.firstIndex { $0.id == selectedTabID } ?? 0
-        selectTab(tabs[(current + offset + tabs.count) % tabs.count].id)
+        guard !tabGroups.isEmpty else { return }
+        let current = tabGroups.firstIndex { $0.id == selectedGroupID } ?? 0
+        let index = ((current + offset) % tabGroups.count + tabGroups.count) % tabGroups.count
+        selectGroup(tabGroups[index].id)
+    }
+
+    func selectGroup(_ id: UUID) {
+        guard tabGroups.contains(where: { $0.id == id }) else { return }
+        selectedGroupID = id
+        dismissPalette()
+        persistTabs()
     }
 
     func selectTab(_ id: UUID) {
-        guard tabs.contains(where: { $0.id == id }) else { return }
-        if isSplit, tab(in: activePane == .primary ? .secondary : .primary)?.id == id {
-            let old = selectedTabID
-            if activePane == .primary { secondaryTabID = old } else { primaryTabID = old }
-        }
-        selectedTabID = id
+        guard let index = tabGroups.firstIndex(where: { $0.memberIDs.contains(id) }) else { return }
+        tabGroups[index].focusedID = id
+        selectGroup(tabGroups[index].id)
+    }
+
+    func tab(withID id: UUID) -> DrawerTab? { tabs.first { $0.id == id } }
+
+    /// Move strip units without recreating sessions or changing pair focus.
+    /// A nil target means the end of the strip.
+    @discardableResult
+    func moveGroup(_ id: UUID, relativeTo target: UUID?, after: Bool = false) -> Bool {
+        guard let sourceIndex = tabGroups.firstIndex(where: { $0.id == id }),
+              target != id,
+              target == nil || tabGroups.contains(where: { $0.id == target }) else { return false }
+        let originalOrder = tabGroups.map(\.id)
+        let group = tabGroups.remove(at: sourceIndex)
+        let targetIndex = target.flatMap { target in tabGroups.firstIndex { $0.id == target } }
+        let insertion = targetIndex.map { $0 + (after ? 1 : 0) } ?? tabGroups.count
+        tabGroups.insert(group, at: insertion)
+        guard tabGroups.map(\.id) != originalOrder else { return false }
+        persistTabs()
+        return true
+    }
+
+    func moveGroup(_ id: UUID, by offset: Int) {
+        guard let index = tabGroups.firstIndex(where: { $0.id == id }),
+              tabGroups.indices.contains(index + offset) else { return }
+        moveGroup(id, relativeTo: tabGroups[index + offset].id, after: offset > 0)
+    }
+
+    /// Join neighboring singles in strip order, keeping their sessions alive.
+    /// Retain the target's identity so its outline can become the pair capsule.
+    @discardableResult
+    func mergeGroups(_ sourceID: UUID, into targetID: UUID) -> Bool {
+        guard let sourceIndex = tabGroups.firstIndex(where: { $0.id == sourceID }),
+              let targetIndex = tabGroups.firstIndex(where: { $0.id == targetID }),
+              abs(sourceIndex - targetIndex) == 1,
+              tabGroups[sourceIndex].secondaryID == nil,
+              tabGroups[targetIndex].secondaryID == nil else { return false }
+        let range = min(sourceIndex, targetIndex)...max(sourceIndex, targetIndex)
+        let pair = DrawerTabGroup(id: targetID,
+                                  primaryID: tabGroups[range.lowerBound].primaryID,
+                                  secondaryID: tabGroups[range.upperBound].primaryID,
+                                  focusedID: tabGroups[sourceIndex].primaryID)
+        tabGroups.replaceSubrange(range, with: [pair])
+        selectedGroupID = pair.id
         dismissPalette()
         persistTabs()
+        return true
     }
 
     func tab(in pane: Pane) -> DrawerTab? {
@@ -187,70 +265,120 @@ final class DrawerWorkspace {
     }
 
     func focusPane(_ pane: Pane, requestFocus: Bool = true) {
-        guard pane == .primary || isSplit else { return }
-        activePane = pane
+        guard let index = tabGroups.firstIndex(where: { $0.id == selectedGroupID }),
+              let id = pane == .primary ? primaryTabID : secondaryTabID else { return }
+        tabGroups[index].focusedID = id
         quickLook.close()
         if requestFocus { onRequestColumnFocus?() }
         persistTabs()
     }
 
     func splitPane(terminal: Bool? = nil) {
+        guard !isSplit, let originalGroup = selectedGroup else { return }
         let directory = contextDirectory
         let useTerminal = terminal ?? (self.terminal != nil)
-        let original = primaryTabID
-        activePane = .secondary
         if useTerminal { newTerminal(at: directory) } else { newTab(at: directory) }
-        primaryTabID = original
-        if secondaryTabID == nil { activePane = .primary }
+        guard let addedID = selectedTabID, addedID != originalGroup.primaryID,
+              let index = tabGroups.firstIndex(where: { $0.id == originalGroup.id }) else { return }
+        let addedGroupID = selectedGroupID
+        tabGroups[index].secondaryID = addedID
+        tabGroups[index].focusedID = addedID
+        tabGroups.removeAll { $0.id == addedGroupID }
+        selectedGroupID = originalGroup.id
         dismissPalette()
+        persistTabs()
+    }
+
+    func unpairGroup(_ id: UUID) {
+        guard let index = tabGroups.firstIndex(where: { $0.id == id }),
+              let secondaryID = tabGroups[index].secondaryID else { return }
+        let pair = tabGroups[index]
+        let left = DrawerTabGroup(id: pair.id, primaryID: pair.primaryID)
+        let right = DrawerTabGroup(primaryID: secondaryID)
+        tabGroups.replaceSubrange(index...index, with: [left, right])
+        if selectedGroupID == pair.id {
+            selectedGroupID = pair.focusedID == secondaryID ? right.id : left.id
+            dismissPalette()
+        }
         persistTabs()
     }
 
     func closeSplit() {
-        guard isSplit else { return }
-        primaryTabID = selectedTabID
-        secondaryTabID = nil
-        activePane = .primary
-        dismissPalette()
-        persistTabs()
+        if let selectedGroupID { unpairGroup(selectedGroupID) }
+    }
+
+    /// Closing a tab-strip item closes the whole pair. Closing an individual
+    /// session (for example via an embedded host) leaves its partner as a single.
+    func closeGroup(_ id: UUID) {
+        guard let group = tabGroups.first(where: { $0.id == id }) else { return }
+        if group.secondaryID == nil { closeTab(group.primaryID); return }
+        removeTabs(Set(group.memberIDs))
     }
 
     func closeTab(_ id: UUID) {
+        guard tabs.contains(where: { $0.id == id }) else { return }
         guard tabs.count > 1 || tabs.first?.terminal != nil else { onHide?(); return }
-        guard let offset = tabs.firstIndex(where: { $0.id == id }) else { return }
-        tabs[offset].terminal?.stop()
-        tabs.remove(at: offset)
-        if tabs.isEmpty {
-            primaryTabID = nil; secondaryTabID = nil; activePane = .primary
-            newTab(); return
+        removeTabs([id])
+    }
+
+    private func removeTabs(_ ids: Set<UUID>) {
+        let previousIndex = tabGroups.firstIndex { $0.id == selectedGroupID } ?? 0
+        for tab in tabs where ids.contains(tab.id) { tab.terminal?.stop() }
+        tabs.removeAll { ids.contains($0.id) }
+        tabGroups = tabGroups.compactMap { group in
+            let remaining = group.memberIDs.filter { !ids.contains($0) }
+            guard let primary = remaining.first else { return nil }
+            return DrawerTabGroup(id: group.id, primaryID: primary,
+                                  secondaryID: remaining.dropFirst().first,
+                                  focusedID: remaining.contains(group.focusedID) ? group.focusedID : primary)
         }
-        if primaryTabID == id || secondaryTabID == id {
-            let otherID = primaryTabID == id ? secondaryTabID : primaryTabID
-            let replacement = tabs.first { $0.id != otherID }?.id
-            if let replacement {
-                if primaryTabID == id { primaryTabID = replacement } else { secondaryTabID = replacement }
-            } else {
-                primaryTabID = otherID ?? tabs[0].id
-                secondaryTabID = nil
-                activePane = .primary
-            }
+        if !tabGroups.contains(where: { $0.id == selectedGroupID }) {
+            selectedGroupID = tabGroups[safe: min(previousIndex, tabGroups.count - 1)]?.id
         }
+        if tabs.isEmpty { newTab() }
         onRequestColumnFocus?()
         persistTabs()
     }
 
+    private func restoreGroups(_ saved: [SavedDrawerTabGroup], selectedIndex: Int, restoredIDs: [Int: UUID]) {
+        var used = Set<UUID>()
+        var groups: [DrawerTabGroup] = []
+        var selected: UUID?
+        for (index, entry) in saved.enumerated() {
+            let members = entry.members.prefix(2).compactMap { restoredIDs[$0] }.filter { used.insert($0).inserted }
+            guard let primary = members.first else { continue }
+            let focused = entry.members[safe: entry.focusedMember].flatMap { restoredIDs[$0] }
+            let group = DrawerTabGroup(primaryID: primary, secondaryID: members.dropFirst().first, focusedID: focused)
+            groups.append(group)
+            if index == selectedIndex { selected = group.id }
+        }
+        for tab in tabs where !used.contains(tab.id) { groups.append(DrawerTabGroup(primaryID: tab.id)) }
+        tabGroups = groups
+        selectedGroupID = selected ?? groups.first?.id
+    }
+
     func persistTabs() {
-        guard !isStopped else { return }
+        guard !isStopped, !isRestoringTabs else { return }
         let saved = tabs.compactMap { tab -> SavedDrawerTab? in
             guard let path = tab.currentRoot?.path else { return nil }
             return SavedDrawerTab(kind: tab.terminal == nil ? .browser : .terminal, path: path)
         }
         defaults.set(try? JSONEncoder().encode(saved), forKey: "drawerTabs")
         let savedIDs = tabs.filter { $0.currentRoot != nil }.map(\.id)
+        let groups = tabGroups.compactMap { group -> (UUID, SavedDrawerTabGroup)? in
+            let memberIDs = group.memberIDs.filter { savedIDs.contains($0) }
+            guard !memberIDs.isEmpty else { return nil }
+            let members = memberIDs.compactMap { savedIDs.firstIndex(of: $0) }
+            return (group.id, SavedDrawerTabGroup(members: members,
+                focusedMember: memberIDs.firstIndex(of: group.focusedID) ?? 0))
+        }
+        defaults.set(try? JSONEncoder().encode(groups.map(\.1)), forKey: "drawerTabGroups")
+        defaults.set(groups.firstIndex { $0.0 == selectedGroupID } ?? 0, forKey: "selectedDrawerGroup")
+        // Retain the legacy keys so older builds can restore the active pair.
         defaults.set(savedIDs.firstIndex { $0 == primaryTabID } ?? 0, forKey: "drawerPrimaryTab")
         defaults.set(savedIDs.firstIndex { $0 == secondaryTabID }, forKey: "drawerSecondaryTab")
         defaults.set(activePane.rawValue, forKey: "drawerActivePane")
-        defaults.set(tabs.filter { $0.currentRoot != nil }.firstIndex { $0.id == selectedTabID } ?? 0, forKey: "selectedDrawerTab")
+        defaults.set(savedIDs.firstIndex { $0 == selectedTabID } ?? 0, forKey: "selectedDrawerTab")
         defaults.setStandardizedFileURLs(tabs.compactMap { $0.browser?.currentRoot }, forKey: "browserTabRoots")
         defaults.set(tabs.filter { $0.browser != nil }.firstIndex { $0.id == selectedTabID } ?? 0, forKey: "selectedBrowserTab")
     }
@@ -267,11 +395,8 @@ final class DrawerWorkspace {
         index.replaceIndexRoots(folders.folders)
         // Empty tabs do not retain a removed root as a writable-looking location.
         if folders.folders.isEmpty && !folders.allowsSystemWideAccess {
-            tabs.removeAll { $0.browser != nil }
-            primaryTabID = tabs.first?.id
-            secondaryTabID = nil
-            activePane = .primary
-            newTab()
+            removeTabs(Set(tabs.filter { $0.browser != nil }.map(\.id)))
+            if browser == nil { newTab() }
         }
         persistTabs()
     }
@@ -354,6 +479,13 @@ final class DrawerWorkspace {
         else { errorMessage = "Couldn’t open \(result.displayName). The file may have moved." }
     }
 
+    func applyTerminalThemes() {
+        for tab in tabs {
+            tab.terminal?.setThemes(light: preferences.lightTerminalTheme, dark: preferences.darkTerminalTheme)
+            tab.terminal?.setUsesGPU(preferences.terminalUsesGPU)
+        }
+    }
+
     func applyPreferences() {
         for tab in tabs { tab.browser?.applyPreferenceChange() }
     }
@@ -368,10 +500,12 @@ final class DrawerWorkspace {
         case .search: beginSearch()
         case .goToFolder: beginLocations()
         case .splitPane: splitPane()
+        case .splitTerminal: splitPane(terminal: true)
+        case .splitFiles: splitPane(terminal: false)
         case .closeSplit: closeSplit()
         case .focusOtherPane: focusPane(activePane == .primary ? .secondary : .primary)
         case .newTab: newTab()
-        case .closeTab: if let selectedTabID { closeTab(selectedTabID) }
+        case .closeTab: if let selectedGroupID { closeGroup(selectedGroupID) }
         case .settings: onShowSettings?()
         case .openWith: chooseApplication()
         default: browser?.perform(command)

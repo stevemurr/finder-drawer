@@ -20,3 +20,26 @@ struct SavedDrawerTab: Codable {
     let kind: Kind
     let path: String
 }
+
+/// The tab strip owns groups; each group presents one session or a lasting pair.
+struct DrawerTabGroup: Identifiable {
+    let id: UUID
+    var primaryID: UUID
+    var secondaryID: UUID?
+    var focusedID: UUID
+
+    init(id: UUID = UUID(), primaryID: UUID, secondaryID: UUID? = nil, focusedID: UUID? = nil) {
+        self.id = id
+        self.primaryID = primaryID
+        self.secondaryID = secondaryID
+        self.focusedID = focusedID == secondaryID ? secondaryID ?? primaryID : primaryID
+    }
+
+    var memberIDs: [UUID] { [primaryID] + (secondaryID.map { [$0] } ?? []) }
+}
+
+struct SavedDrawerTabGroup: Codable {
+    /// Indices into the saved session list; kept separate from runtime UUIDs.
+    let members: [Int]
+    let focusedMember: Int
+}

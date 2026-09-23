@@ -1,4 +1,5 @@
 import AppKit
+import QuickLookThumbnailing
 
 /// One row: icon, name, and a disclosure chevron for folders.
 ///
@@ -10,6 +11,12 @@ import AppKit
 final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
     private let icon = NSImageView()
     private let label = NSTextField(labelWithString: "")
+    private let detail = NSTextField(labelWithString: "")
+    private var thumbnailRequest: QLThumbnailGenerator.Request?
+    private var imageKey = ""
+    private static let thumbnails: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>(); cache.countLimit = 256; return cache
+    }()
     private let editor = NSTextField()
     private let sizeLabel = NSTextField(labelWithString: "")
     private let chevron = NSImageView()
@@ -30,7 +37,12 @@ final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
         label.font = .systemFont(ofSize: 13)
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .regular)
+        detail.font = .systemFont(ofSize: 11)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        sizeLabel.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
         sizeLabel.textColor = .tertiaryLabelColor
         sizeLabel.alignment = .right
         sizeLabel.lineBreakMode = .byClipping
@@ -56,7 +68,7 @@ final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
         chevron.contentTintColor = .tertiaryLabelColor
         chevron.symbolConfiguration = .init(pointSize: 9, weight: .semibold)
 
-        for view in [icon, label, editor, sizeLabel, chevron] {
+        for view in [icon, label, detail, editor, sizeLabel, chevron] {
             view.translatesAutoresizingMaskIntoConstraints = false
             addSubview(view)
         }
@@ -66,11 +78,14 @@ final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
-            icon.heightAnchor.constraint(equalToConstant: 16),
+            icon.widthAnchor.constraint(equalToConstant: 28),
+            icon.heightAnchor.constraint(equalToConstant: 28),
 
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 8),
-            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            label.topAnchor.constraint(equalTo: topAnchor, constant: 7),
+            detail.topAnchor.constraint(equalTo: label.bottomAnchor, constant: 2),
+            detail.leadingAnchor.constraint(equalTo: label.leadingAnchor),
+            detail.trailingAnchor.constraint(lessThanOrEqualTo: sizeLabel.leadingAnchor, constant: -8),
             label.trailingAnchor.constraint(lessThanOrEqualTo: sizeLabel.leadingAnchor, constant: -8),
 
             editor.leadingAnchor.constraint(equalTo: label.leadingAnchor),
@@ -91,7 +106,9 @@ final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
 
     func configure(with entry: DirectoryEntry, showsItemSize: Bool = false) {
         displayName = entry.displayName
-        icon.image = NSWorkspace.shared.icon(forFile: entry.url.path)
+        updateImage(for: entry)
+        let size = entry.isDirectory ? nil : entry.fileSize.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) }
+        detail.stringValue = [entry.isDirectory ? "Folder" : entry.kindDescription, showsItemSize ? nil : size].compactMap { $0 }.joined(separator: " · ")
         label.stringValue = entry.displayName
         label.toolTip = entry.displayName
         editor.toolTip = entry.displayName
@@ -114,6 +131,30 @@ final class BrowserRowCellView: NSTableCellView, NSTextFieldDelegate {
         setAccessibilityIdentifier("browser-item-\(entry.displayName)")
         label.setAccessibilityIdentifier("browser-item-\(entry.displayName)")
         if !isEditing { endEditing() }
+    }
+
+    private func updateImage(for entry: DirectoryEntry) {
+        let key = entry.url.path + "|\(entry.modifiedAt?.timeIntervalSince1970 ?? 0)|\(entry.fileSize ?? 0)"
+        guard key != imageKey else { return }
+        if let thumbnailRequest { QLThumbnailGenerator.shared.cancel(thumbnailRequest) }
+        thumbnailRequest = nil; imageKey = key
+        let wantsThumbnail = !entry.isDirectory
+            && (entry.contentType?.conforms(to: .image) == true || entry.contentType?.conforms(to: .movie) == true)
+        // A cached thumbnail wins outright; resolving the type icon first
+        // would only be replaced in the same pass.
+        if wantsThumbnail, let cached = Self.thumbnails.object(forKey: key as NSString) { icon.image = cached; return }
+        icon.image = FileIconCache.icon(for: entry)
+        guard wantsThumbnail else { return }
+        let request = QLThumbnailGenerator.Request(fileAt: entry.url, size: NSSize(width: 32, height: 32), scale: 2, representationTypes: .thumbnail)
+        thumbnailRequest = request
+        QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { [weak self] thumbnail, _ in
+            DispatchQueue.main.async {
+                guard let self, self.imageKey == key, let thumbnail else { return }
+                self.icon.image = thumbnail.nsImage
+                Self.thumbnails.setObject(thumbnail.nsImage, forKey: key as NSString)
+                self.thumbnailRequest = nil
+            }
+        }
     }
 
     /// Mirrors the enclosing NSTableRowView's selected state onto the

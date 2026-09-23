@@ -10,11 +10,11 @@ enum BrowserColumnSurfaceStyle: Equatable {
     var divider: Color { DrawerTheme.line }
 
     var focusedColumnBackground: NSColor {
-        NSColor.controlAccentColor.withAlphaComponent(0.035)
+        NSColor.clear
     }
 
     var focusedSelection: NSColor {
-        NSColor(DrawerTheme.shell).withAlphaComponent(0.22)
+        NSColor(DrawerTheme.shell).withAlphaComponent(0.14)
     }
 
     var unfocusedSelection: NSColor {
@@ -33,6 +33,7 @@ enum BrowserColumnSurfaceStyle: Equatable {
 struct BrowserColumnSurface: View {
     @Bindable var viewModel: BrowserViewModel
     var showsItemSizes = false
+    var showsOnlyFocusedColumn = false
     var style: BrowserColumnSurfaceStyle = .standard
     var accessibilityIdentifier = "browser-columns"
     var childAccessibilityPrefix = "browser"
@@ -48,7 +49,7 @@ struct BrowserColumnSurface: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal) {
                     HStack(spacing: 0) {
-                        ForEach(Array(viewModel.columns.enumerated()), id: \.element.id) {
+                        ForEach(visibleColumns, id: \.element.id) {
                             index, column in
                             BrowserColumnContentView(
                                 viewModel: viewModel,
@@ -59,13 +60,13 @@ struct BrowserColumnSurface: View {
                                 accessibilityPrefix: childAccessibilityPrefix
                             )
                             .frame(
-                                width: widths.indices.contains(index)
+                                width: showsOnlyFocusedColumn ? geometry.size.width : widths.indices.contains(index)
                                     ? widths[index]
                                     : BrowserColumnSizing.minimumWidth
                             )
                             .id(column.id)
 
-                            if index < viewModel.columns.count - 1 {
+                            if !showsOnlyFocusedColumn && index < viewModel.columns.count - 1 {
                                 Rectangle()
                                     .fill(style.divider)
                                     .frame(width: 1)
@@ -86,6 +87,10 @@ struct BrowserColumnSurface: View {
                         proxy.scrollTo(viewModel.columns[index].id, anchor: .trailing)
                     }
                 }
+                .onChange(of: geometry.size.width) { _, _ in
+                    guard viewModel.columns.indices.contains(viewModel.focusedColumnIndex) else { return }
+                    proxy.scrollTo(viewModel.columns[viewModel.focusedColumnIndex].id, anchor: .trailing)
+                }
                 .onChange(of: viewModel.columns.count) { _, _ in
                     guard let last = viewModel.columns.last else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
@@ -98,6 +103,15 @@ struct BrowserColumnSurface: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(accessibilityIdentifier)
     }
+    private var visibleColumns: [(offset: Int, element: BrowserColumn)] {
+        let all = Array(viewModel.columns.enumerated())
+        if showsOnlyFocusedColumn {
+            let index = viewModel.columns.count > viewModel.focusedColumnIndex + 1 ? viewModel.focusedColumnIndex + 1 : viewModel.focusedColumnIndex
+            return all.filter { $0.offset == index }
+        }
+        return all
+    }
+
 }
 
 /// A column's table stays resident behind every transient state.
@@ -114,6 +128,12 @@ struct BrowserColumnContentView: View {
     var accessibilityPrefix = "browser"
 
     var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(column.url.lastPathComponent.isEmpty ? "/" : column.url.lastPathComponent).lineLimit(1).truncationMode(.middle)
+                Spacer()
+                if !column.isLoading { Text("\(column.entries.count) items").fixedSize() }
+            }.font(.system(size: 11)).foregroundStyle(.secondary).padding(.horizontal, 12).frame(height: 34)
         ZStack {
             BrowserColumnTableView(
                 viewModel: viewModel,
@@ -160,6 +180,7 @@ struct BrowserColumnContentView: View {
                     retry: { viewModel.retryColumn(at: index) }
                 )
             }
+        }
         }
     }
 }

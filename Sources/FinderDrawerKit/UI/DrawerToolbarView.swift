@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct DrawerToolbarView: View {
+    static let verticalContentOffset: CGFloat = 4
     @Bindable var workspace: DrawerWorkspace
 
     var body: some View {
@@ -11,15 +12,13 @@ struct DrawerToolbarView: View {
                 Spacer(minLength: 0)
             }.frame(width: workspace.preferences.isSidebarVisible ? workspace.toolbarLeadingWidth : 40)
             if workspace.preferences.isSidebarVisible { Divider().frame(maxHeight: .infinity) }
-            HStack(spacing: 8) {
-                Image(systemName: workspace.selectedTab?.symbol ?? "folder")
-                Text(workspace.selectedTab?.title ?? "Finder Drawer")
-                    .font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Spacer(minLength: 8)
-            }.padding(.leading, 14).padding(.trailing, 4)
+            DrawerTabBar(workspace: workspace)
+                .allowsHitTesting(!workspace.isPalettePresented)
         }
         .buttonStyle(DrawerIconButtonStyle())
         .frame(maxWidth: .infinity).frame(height: 40)
+        // Balance the titlebar's top inset against the pane's 8-point top padding.
+        .offset(y: Self.verticalContentOffset)
     }
 }
 

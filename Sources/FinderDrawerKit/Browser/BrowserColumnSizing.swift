@@ -8,28 +8,35 @@ import AppKit
 /// merely because selection changed.
 @MainActor
 enum BrowserColumnSizing {
-    static let minimumWidth: CGFloat = 220
-    static let maximumWidth: CGFloat = 520
-    static let filenameChrome: CGFloat = 62
+    nonisolated static let minimumWidth: CGFloat = 220
+    nonisolated static let maximumWidth: CGFloat = 520
+    nonisolated static let filenameChrome: CGFloat = 62
     static let dividerWidth: CGFloat = 1
-    static let filenameFont = NSFont.systemFont(ofSize: 13)
-    static let measurementSampleLimit = 512
+    nonisolated(unsafe) static let filenameFont = NSFont.systemFont(ofSize: 13)
+    nonisolated static let measurementSampleLimit = 512
 
     /// A robust natural width: the 90th-percentile filename rather than the
     /// longest one, so one generated/pathological name cannot make every
     /// sibling pay for a 500-point column.
-    static func naturalWidth(displayNames: [String]) -> CGFloat {
+    ///
+    /// Measurement is nonisolated so `DirectoryLister` can run it beside the
+    /// directory read instead of on the main actor when a listing lands.
+    nonisolated static func naturalWidth(displayNames: [String]) -> CGFloat {
         naturalWidth(displayNames: displayNames, font: filenameFont)
     }
 
-    static func naturalWidth(entries: [DirectoryEntry]) -> CGFloat {
+    nonisolated static func naturalWidth(entries: [DirectoryEntry]) -> CGFloat {
         naturalWidth(displayNames: representativeDisplayNames(from: entries))
     }
 
-    static func naturalWidth(displayNames: [String], font: NSFont) -> CGFloat {
+    /// Core Text rather than `NSString` sizing: a `CTLine` is safe to build
+    /// on any thread and measures the same single-line typographic width.
+    nonisolated static func naturalWidth(displayNames: [String], font: NSFont) -> CGFloat {
         guard !displayNames.isEmpty else { return minimumWidth }
-        let measured = displayNames.map {
-            ceil(($0 as NSString).size(withAttributes: [.font: font]).width)
+        let attributes: [NSAttributedString.Key: Any] = [.font: font]
+        let measured = displayNames.map { name -> CGFloat in
+            let line = CTLineCreateWithAttributedString(NSAttributedString(string: name, attributes: attributes))
+            return ceil(CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil)))
         }.sorted()
         let percentileIndex = max(
             0,
@@ -56,11 +63,11 @@ enum BrowserColumnSizing {
     /// Even sampling retains short and long regions of an already-sorted
     /// listing while putting a hard ceiling on AppKit font measurement. The
     /// first and last rows are always represented.
-    static func representativeDisplayNames(from entries: [DirectoryEntry]) -> [String] {
+    nonisolated static func representativeDisplayNames(from entries: [DirectoryEntry]) -> [String] {
         representativeDisplayNames(from: entries, limit: measurementSampleLimit)
     }
 
-    static func representativeDisplayNames(
+    nonisolated static func representativeDisplayNames(
         from entries: [DirectoryEntry],
         limit: Int
     ) -> [String] {
@@ -193,7 +200,7 @@ enum BrowserColumnSizing {
         return 1.35
     }
 
-    private static func clamp(_ width: CGFloat) -> CGFloat {
+    private nonisolated static func clamp(_ width: CGFloat) -> CGFloat {
         min(max(width, minimumWidth), maximumWidth)
     }
 }

@@ -7,6 +7,12 @@ import Observation
 final class BrowserPreferences {
     @ObservationIgnored private let defaults: UserDefaults
 
+    var isDrawerEnabled: Bool {
+        didSet { defaults.set(isDrawerEnabled, forKey: "drawerEnabled") }
+    }
+    var lastWindowFrame: CGRect? {
+        didSet { defaults.set(try? JSONEncoder().encode(lastWindowFrame), forKey: "drawerLastWindowFrame") }
+    }
     var hideOnDeactivate: Bool {
         didSet { defaults.set(hideOnDeactivate, forKey: "drawerHideOnDeactivate") }
     }
@@ -34,8 +40,34 @@ final class BrowserPreferences {
     }
     var shortcutError: String?
 
+    var lightTerminalTheme: TerminalTheme {
+        didSet {
+            defaults.set(lightTerminalTheme.rawValue, forKey: "terminalLightTheme")
+            onTerminalThemeChange?()
+        }
+    }
+    var darkTerminalTheme: TerminalTheme {
+        didSet {
+            defaults.set(darkTerminalTheme.rawValue, forKey: "terminalDarkTheme")
+            onTerminalThemeChange?()
+        }
+    }
+    /// Draw terminals with SwiftTerm's Metal renderer. A view that cannot
+    /// create a Metal pipeline keeps the Core Graphics renderer.
+    var terminalUsesGPU: Bool {
+        didSet {
+            defaults.set(terminalUsesGPU, forKey: "terminalUsesGPU")
+            onTerminalThemeChange?()
+        }
+    }
+    /// Fires for any terminal presentation change: themes or renderer.
+    @ObservationIgnored var onTerminalThemeChange: (() -> Void)?
+
     var showHiddenFiles: Bool {
         didSet { defaults.set(showHiddenFiles, forKey: "browserShowHiddenFiles") }
+    }
+    var browserListView: Bool {
+        didSet { defaults.set(browserListView, forKey: "browserListView") }
     }
     var showItemSizes: Bool {
         didSet { defaults.set(showItemSizes, forKey: "browserShowItemSizes") }
@@ -46,6 +78,14 @@ final class BrowserPreferences {
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        let light = defaults.string(forKey: "terminalLightTheme").flatMap(TerminalTheme.init(rawValue:)) ?? .system
+        let dark = defaults.string(forKey: "terminalDarkTheme").flatMap(TerminalTheme.init(rawValue:)) ?? .system
+        lightTerminalTheme = TerminalTheme.choices(dark: false).contains(light) ? light : .system
+        darkTerminalTheme = TerminalTheme.choices(dark: true).contains(dark) ? dark : .system
+        terminalUsesGPU = defaults.object(forKey: "terminalUsesGPU") as? Bool ?? true
+        isDrawerEnabled = defaults.object(forKey: "drawerEnabled") as? Bool ?? true
+        lastWindowFrame = defaults.data(forKey: "drawerLastWindowFrame")
+            .flatMap { try? JSONDecoder().decode(CGRect.self, from: $0) }
         hideOnDeactivate = defaults.object(forKey: "drawerHideOnDeactivate") as? Bool ?? false
         animateDrawer = defaults.object(forKey: "drawerAnimate") as? Bool ?? true
         let width = defaults.object(forKey: "drawerWidth") as? Double ?? 0.8
@@ -56,6 +96,7 @@ final class BrowserPreferences {
         shortcut = defaults.data(forKey: "drawerShortcutData").flatMap { try? JSONDecoder().decode(DrawerShortcut.self, from: $0) }
             ?? defaults.string(forKey: "drawerShortcut").flatMap(DrawerShortcut.init(rawValue:)) ?? .controlOptionSpace
         showHiddenFiles = defaults.bool(forKey: "browserShowHiddenFiles")
+        browserListView = defaults.bool(forKey: "browserListView")
         showItemSizes = defaults.bool(forKey: "browserShowItemSizes")
         sortOrder = defaults.string(forKey: "browserSortOrder")
             .flatMap(BrowserSort.init(rawValue:)) ?? .name

@@ -187,13 +187,7 @@ final class BrowserColumnSizingTests: XCTestCase {
         )
         var replacementColumn = BrowserColumn(url: directory)
         replacementColumn.entries = [second]
-        coordinator.syncListing(
-            replacementColumn.entries,
-            columnInstanceID: replacementColumn.instanceID,
-            listingRevision: replacementColumn.listingRevision,
-            contentRevision: replacementColumn.contentRevision,
-            in: table
-        )
+        coordinator.syncListing(replacementColumn, in: table)
         XCTAssertEqual(coordinator.entries, [second])
 
         let metadataUpdate = DirectoryEntry(
@@ -207,13 +201,7 @@ final class BrowserColumnSizingTests: XCTestCase {
             contentType: second.contentType
         )
         replacementColumn.entries = [metadataUpdate]
-        coordinator.syncListing(
-            replacementColumn.entries,
-            columnInstanceID: replacementColumn.instanceID,
-            listingRevision: replacementColumn.listingRevision,
-            contentRevision: replacementColumn.contentRevision,
-            in: table
-        )
+        coordinator.syncListing(replacementColumn, in: table)
         XCTAssertEqual(coordinator.entries, [metadataUpdate])
 
         viewModel.renamingURL = metadataUpdate.url
@@ -249,13 +237,7 @@ final class BrowserColumnSizingTests: XCTestCase {
             contentType: nil
         )
         replacementColumn.entries = [inserted, metadataUpdate]
-        coordinator.syncListing(
-            replacementColumn.entries,
-            columnInstanceID: replacementColumn.instanceID,
-            listingRevision: replacementColumn.listingRevision,
-            contentRevision: replacementColumn.contentRevision,
-            in: table
-        )
+        coordinator.syncListing(replacementColumn, in: table)
         coordinator.syncEditing(in: table)
         XCTAssertEqual(viewModel.renameText, "draft name.txt")
         let remountedCell = table.view(

@@ -13,6 +13,8 @@ open "dist/Finder Drawer.app"
 
 The drawer opens at the top of the display under your pointer. **Control–Option–Space** toggles it globally; **Settings → General** records custom shortcuts, and offers animation, height, and auto-hide controls (auto-hide is off by default). The menu bar icon remains available while the drawer is hidden. A focused drawer supports standard macOS window controls, tiling, and full screen, and appears in the Dock while a window is open.
 
+Turn off **Settings → General → Enable drawer** to hide and reopen the window at its last position and size without sliding. The setting and window frame survive relaunches. Enable it again to return to opening at the top of the display under your pointer.
+
 Browse Home, Applications, Computer, and Volumes immediately. Choose **Add Folders…** to include folders in filename search. Open the separate Settings window with **⌘,**, the toolbar gear, or either app menu. Copy the app from `dist` to Applications if you want to keep it there. The build is signed locally for development; distributing it to other Macs requires your own signing and notarization.
 
 ## What it does
@@ -34,9 +36,9 @@ Search includes only the folders you choose, omits hidden files/package descenda
 | New terminal in selected folder | ⌘T |
 | Toggle sidebar | ⌃⌘S |
 | Next / previous tab | ⌃Tab / ⌃⇧Tab |
-| Select tab 1–9 | ⌘1–⌘9 |
+| Select tab or pair 1–9 | ⌘1–⌘9 |
 | Go to folder / recent locations | o or ⇧⌘G |
-| Split right / return to single pane | ⌘\ / ⇧⌘\ |
+| Split right / unpair tabs | ⌘\ / ⇧⌘\ |
 | Focus the other pane | ⌥⌘← / ⌥⌘→ |
 | New file tab / close tab | ⌘N / ⌘W |
 | Move between columns | ← / → or Tab / ⇧Tab |
@@ -49,7 +51,8 @@ Search includes only the folders you choose, omits hidden files/package descenda
 | Copy / cut selected files | ⌘C / ⌘X |
 | Paste files | ⌘V |
 | Move copied files here | ⌥⌘V |
-| Duplicate selection | ⌘D |
+| Duplicate selection | ⇧⌘D |
+| Split with terminal / file browser | ⌘D / ⌘S |
 | Undo / redo file operation | ⌘Z / ⇧⌘Z |
 | Select all files in the focused column | ⌘A |
 | Copy selected paths | ⌥⌘C |
@@ -59,9 +62,9 @@ Search includes only the folders you choose, omits hidden files/package descenda
 
 The wider centered palette has actions (⌘K), file search (⌘F or the search icon), and location navigation (o or ⇧⌘G). Type to filter, use ↑/↓ to select, Return to open, and Escape to dismiss. Location navigation fuzzy-matches recent folders, accepts absolute, relative, and ~ paths, and uses Tab to complete a folder. Search stays above the browser in a fixed-height palette, with 40% of its width for filename results and 60% for an embedded Quick Look preview. Click or use ↑/↓ (also Control-N/P) to select, Page Up/Down to move through results, and Return or double-click to reveal a result in the browser. The selection scrolls into view as you move. Previews do not autoplay media; file contents are not indexed. Commands adapt to the selected file, folder, search result, or terminal. “Open Terminal Here in New Tab” uses a selected folder, a file’s parent, or the current folder. The header shares one native toolbar row with the traffic lights, with its location title aligned to the main content. The sidebar toggle animates and remembers its state. Settings, Actions, and Search live below a separator at the bottom of the sidebar; the old window status bar is removed. The tab-add and split buttons share a compact group immediately after the last tab and brighten on hover. The sidebar background continues behind the native window controls.
 
-Use the Split View menu to show two file browsers, a browser and terminal, or two terminals side by side. Click either pane or use ⌥⌘←/→ to make it active; new tabs and file commands target that pane. The tab strip is shared. Selecting the tab already visible on the other side swaps the two panes. Drag the divider to resize; Single Pane keeps the active pane and leaves other tabs available. Pane assignments restore after relaunch. Settings → General provides independent width and height percentages for the next global-shortcut opening.
+Use the Split View menu to pair two file browsers, a browser and terminal, or two terminals side by side. A pair appears as one joined item in the tab strip and keeps both locations together when switching tabs. Click either half or use ⌥⌘←/→ to focus its pane. New file and terminal tabs open as singles; ⌃Tab and ⌘1–9 switch between tab-strip items, including whole pairs. Right-click a pair and choose **Unpair Tabs** (or use ⇧⌘\) to restore adjacent singles without closing either session. The pair’s close button and ⌘W close both members. Drag a single tab over the center of an adjacent single to preview a group with a soft outline. Move away to dismiss the preview, or release to animate them into a pair. Both sessions stay alive, retain their left-to-right order, and the dragged tab keeps focus. Reduce Motion removes the animation. To reorder, drop at a tab’s edge or between tabs; existing pairs move together when dragged by either half. Drop on the add/split controls to move to the end. Tab order is saved across relaunches. Drag the pane divider to resize. Multiple pairs and their focused panes restore after relaunch; older saved splits migrate to a pair. Settings → General provides independent width and height percentages for the next global-shortcut opening.
 
-Terminal tabs run your login shell in a native PTY, supporting interactive programs, copy/paste, and resizing. Default terminal and selection colors follow the window’s macOS light, dark, and high-contrast appearance, including existing tabs, without restarting shells. Switching tabs or hiding the drawer keeps sessions running. Closing a terminal tab ends its shell and foreground job; quitting ends all sessions. Tabs and directories restore after relaunch, with fresh shells started only when viewed. Commands and scrollback are not restored. Shells that report their current directory with OSC 7 update the tab context; other shells retain their starting directory. Browser write restrictions do not sandbox terminal commands.
+Terminal tabs run your login shell in a native PTY, supporting interactive programs, copy/paste, and resizing. Default terminal and selection colors follow the window’s macOS light, dark, and high-contrast appearance, including existing tabs, without restarting shells. **Settings → Appearance** offers separate light- and dark-mode theme dropdowns: Catppuccin Mocha, Dracula, Nord, Solarized Dark, Catppuccin Latte, Solarized Light, and Nord Snow (a light adaptation). Choices are saved and apply immediately to existing and future terminals, including background tabs, without losing shell state or scrollback. Themes include all 16 ANSI colors, text, background, selection, and a contrasting cursor. Choose System to restore native colors; programs that explicitly set their own colors retain control of their output. Switching tabs or hiding the drawer keeps sessions running. Closing a terminal tab ends its shell and foreground job; quitting ends all sessions. Tabs and directories restore after relaunch, with fresh shells started only when viewed. Commands and scrollback are not restored. Shells that report their current directory with OSC 7 update the tab context; other shells retain their starting directory. Browser write restrictions do not sandbox terminal commands.
 
 File copy/paste uses the macOS clipboard and interoperates with Finder. Cut leaves originals in place until pasted in Finder Drawer; other apps see ordinary copied files. Paste targets the selected folder, or the focused column's folder when no single folder is selected. Name collisions keep both items with a numbered name; duplicate and same-folder copy use “copy” names. Transfers run in the background and report partial failures. Right-click empty column space to paste directly into that column.
 
@@ -99,3 +102,16 @@ This app is not App Sandbox enabled. macOS still enforces filesystem permissions
 Native Liquid Glass is used for search and toolbar controls on macOS 26 and later, including macOS 27. Older systems use vibrancy; Reduce Transparency provides solid control surfaces, and Reduce Motion disables the drawer animation. No Accessibility permission is needed to manage this app’s own window or register its global shortcut.
 
 See [the extraction record](docs/extraction.md) for provenance, boundaries, tests, and intentional differences from the old interface.
+
+### File preview canvas
+
+Selecting one file opens a rounded preview beside the browser; folders, empty selections, and multi-selections keep the full browser area. File rows show larger native icons or media thumbnails with secondary kind/size details. Column/list controls, breadcrumb navigation, sorting, and folder Back/Forward are available above the browser.
+
+- Audio: sampled stereo waveform, scrubbing, playback speed, and sample-rate/channel/bit-depth metadata when supplied by the file.
+- Video: native playback and scrubbing, codec/resolution/frame-rate and available color metadata.
+- Images: bounded image preview with zoom and available image/camera metadata.
+- PDF: native selectable pages, paging, and zoom.
+- Code/text: selectable read-only text, lightweight syntax highlighting and line numbers for recognized source files.
+- Markdown: common block and inline formatting, plus a source toggle. Other formats use Quick Look.
+
+Space plays or pauses selected audio/video after its preview loads. Escape clears a file preview before hiding the drawer. Text previews are limited to the first 256 KB; image previews are downsampled to at most 2,000 pixels. Playback stops when the preview is dismissed or its tab is changed.

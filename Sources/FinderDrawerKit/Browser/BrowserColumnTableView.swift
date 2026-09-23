@@ -23,7 +23,7 @@ struct BrowserColumnTableView: NSViewRepresentable {
     var style: BrowserColumnSurfaceStyle = .standard
     var accessibilityPrefix = "browser"
 
-    static let rowHeight: CGFloat = 28
+    static let rowHeight: CGFloat = 48
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -82,13 +82,7 @@ struct BrowserColumnTableView: NSViewRepresentable {
         scrollView.backgroundColor = isFocusedColumn ? style.focusedColumnBackground : .clear
         table.surfaceStyle = style
 
-        context.coordinator.syncListing(
-            column.entries,
-            columnInstanceID: column.instanceID,
-            listingRevision: column.listingRevision,
-            contentRevision: column.contentRevision,
-            in: table
-        )
+        context.coordinator.syncListing(column, in: table)
         context.coordinator.syncItemSizePresentation(in: table)
         context.coordinator.syncSelection(in: table)
         context.coordinator.syncEditing(in: table)
@@ -133,48 +127,28 @@ struct BrowserColumnTableView: NSViewRepresentable {
             columnInstanceID = parent.column.instanceID
             showsItemSizes = parent.showsItemSizes
             super.init()
-            replaceListing(
-                parent.column.entries,
-                columnInstanceID: parent.column.instanceID,
-                listingRevision: parent.column.listingRevision,
-                contentRevision: parent.column.contentRevision
-            )
+            replaceListing(parent.column)
         }
 
         // MARK: Data
 
-        func replaceListing(
-            _ entries: [DirectoryEntry],
-            columnInstanceID: UUID,
-            listingRevision: UInt64,
-            contentRevision: UInt64
-        ) {
-            self.entries = entries
-            self.columnInstanceID = columnInstanceID
-            self.listingRevision = listingRevision
-            self.contentRevision = contentRevision
-            rowByID = Dictionary(
-                uniqueKeysWithValues: entries.enumerated().map { ($0.element.id, $0.offset) }
-            )
+        /// Adopts the column's own row index instead of rebuilding one: both
+        /// describe the same listing revision, and sharing the dictionary is
+        /// copy-on-write free even for a 50k-entry folder.
+        func replaceListing(_ column: BrowserColumn) {
+            entries = column.entries
+            columnInstanceID = column.instanceID
+            listingRevision = column.listingRevision
+            contentRevision = column.contentRevision
+            rowByID = column.rowByID
         }
 
         /// Reload and restore model selection as one transaction. Letting the
         /// reload's temporary empty selection escape into the model can descend
         /// into a just-created folder and steal focus from its rename field.
-        func reloadListing(
-            _ entries: [DirectoryEntry],
-            columnInstanceID: UUID,
-            listingRevision: UInt64,
-            contentRevision: UInt64,
-            in table: NSTableView
-        ) {
+        func reloadListing(_ column: BrowserColumn, in table: NSTableView) {
             suppressSelectionFeedback {
-                replaceListing(
-                    entries,
-                    columnInstanceID: columnInstanceID,
-                    listingRevision: listingRevision,
-                    contentRevision: contentRevision
-                )
+                replaceListing(column)
                 table.reloadData()
                 table.selectRowIndexes(desiredSelection, byExtendingSelection: false)
                 updateSelectionAccessibility(in: table)
@@ -188,15 +162,9 @@ struct BrowserColumnTableView: NSViewRepresentable {
         /// 50k-entry folder. Metadata-only changes update recycled/visible
         /// cells in place so icons and disclosure state stay truthful without a
         /// `reloadData` that would tear down an active inline editor.
-        func syncListing(
-            _ newEntries: [DirectoryEntry],
-            columnInstanceID newColumnInstanceID: UUID,
-            listingRevision newListingRevision: UInt64,
-            contentRevision newContentRevision: UInt64,
-            in table: NSTableView
-        ) {
-            if columnInstanceID != newColumnInstanceID
-                || listingRevision != newListingRevision {
+        func syncListing(_ column: BrowserColumn, in table: NSTableView) {
+            if columnInstanceID != column.instanceID
+                || listingRevision != column.listingRevision {
                 // A real external add/delete/reorder can land while the user
                 // is typing. `reloadData` tears down AppKit's field editor, so
                 // first capture the draft and mark the teardown as
@@ -207,19 +175,16 @@ struct BrowserColumnTableView: NSViewRepresentable {
                     parent.viewModel.renameText = draft
                     stopEditing(in: table)
                 }
-                reloadListing(
-                    newEntries,
-                    columnInstanceID: newColumnInstanceID,
-                    listingRevision: newListingRevision,
-                    contentRevision: newContentRevision,
-                    in: table
-                )
+                reloadListing(column, in: table)
                 return
             }
-            guard contentRevision != newContentRevision else { return }
+            guard contentRevision != column.contentRevision else { return }
 
+            let newEntries = column.entries
             entries = newEntries
-            contentRevision = newContentRevision
+            contentRevision = column.contentRevision
+            // One bridged IndexSet per pass, not one per visible row.
+            let selected = table.selectedRowIndexes
             table.enumerateAvailableRowViews { _, row in
                 guard newEntries.indices.contains(row),
                       let cell = table.view(
@@ -229,13 +194,14 @@ struct BrowserColumnTableView: NSViewRepresentable {
                       ) as? BrowserRowCellView
                 else { return }
                 cell.configure(with: newEntries[row], showsItemSize: parent.showsItemSizes)
-                cell.setSelectionAccessibility(table.selectedRowIndexes.contains(row))
+                cell.setSelectionAccessibility(selected.contains(row))
             }
         }
 
         func syncItemSizePresentation(in table: NSTableView) {
             guard showsItemSizes != parent.showsItemSizes else { return }
             showsItemSizes = parent.showsItemSizes
+            let selected = table.selectedRowIndexes
             table.enumerateAvailableRowViews { _, row in
                 guard entries.indices.contains(row),
                       let cell = table.view(
@@ -245,7 +211,7 @@ struct BrowserColumnTableView: NSViewRepresentable {
                       ) as? BrowserRowCellView
                 else { return }
                 cell.configure(with: entries[row], showsItemSize: showsItemSizes)
-                cell.setSelectionAccessibility(table.selectedRowIndexes.contains(row))
+                cell.setSelectionAccessibility(selected.contains(row))
             }
         }
 
@@ -262,7 +228,7 @@ struct BrowserColumnTableView: NSViewRepresentable {
             let cell = (tableView.makeView(withIdentifier: identifier, owner: self) as? BrowserRowCellView)
                 ?? BrowserRowCellView(identifier: identifier)
             cell.configure(with: entry, showsItemSize: parent.showsItemSizes)
-            cell.setSelectionAccessibility(tableView.selectedRowIndexes.contains(row))
+            cell.setSelectionAccessibility(tableView.isRowSelected(row))
             cell.onCommitRename = { [weak self] newName in
                 guard let self,
                       Self.sameFile(self.parent.viewModel.renamingURL, entry.url)
@@ -278,8 +244,11 @@ struct BrowserColumnTableView: NSViewRepresentable {
             return cell
         }
 
+        /// Row views are recycled like cells. Returning a fresh instance here
+        /// allocated a new view for every row scrolled into a large folder.
         func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
-            let rowView = BrowserColumnRowView()
+            let rowView = (tableView.makeView(withIdentifier: BrowserColumnRowView.reuseIdentifier, owner: self)
+                as? BrowserColumnRowView) ?? BrowserColumnRowView()
             rowView.isFocusedColumn = parent.isFocusedColumn
             rowView.surfaceStyle = parent.style
             return rowView
@@ -360,8 +329,9 @@ struct BrowserColumnTableView: NSViewRepresentable {
         }
 
         private func updateSelectionAccessibility(in table: NSTableView) {
+            let selectedRows = table.selectedRowIndexes
             table.enumerateAvailableRowViews { rowView, row in
-                let selected = table.selectedRowIndexes.contains(row)
+                let selected = selectedRows.contains(row)
                 rowView.setAccessibilitySelected(selected)
                 (table.view(atColumn: 0, row: row, makeIfNecessary: false) as? BrowserRowCellView)?
                     .setSelectionAccessibility(selected)
@@ -645,6 +615,16 @@ final class FileColumnTableView: NSTableView {
 /// on a barely perceptible shade change alone.
 @MainActor
 final class BrowserColumnRowView: NSTableRowView {
+    static let reuseIdentifier = NSUserInterfaceItemIdentifier("browser-row")
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        identifier = Self.reuseIdentifier
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
     var surfaceStyle: BrowserColumnSurfaceStyle = .standard {
         didSet {
             if oldValue != surfaceStyle { needsDisplay = true }

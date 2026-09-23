@@ -130,7 +130,8 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
     }
 
     private var animates: Bool {
-        workspace.preferences.animateDrawer && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        workspace.preferences.isDrawerEnabled && workspace.preferences.animateDrawer
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
     }
 
     public func show() {
@@ -147,8 +148,14 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
                 ?? NSScreen.main
             if let screen {
                 let area = screen.visibleFrame
-                let frame = DrawerGeometry.frame(in: area, preferredWidth: area.width * workspace.preferences.drawerWidth,
+                let frame: NSRect
+                if !workspace.preferences.isDrawerEnabled,
+                   let savedFrame = restingFrame ?? workspace.preferences.lastWindowFrame {
+                    frame = DrawerGeometry.restoredFrame(savedFrame, in: NSScreen.screens.map(\.visibleFrame), fallback: area)
+                } else {
+                    frame = DrawerGeometry.frame(in: area, preferredWidth: area.width * workspace.preferences.drawerWidth,
                                                  heightFraction: workspace.preferences.drawerHeight)
+                }
                 restingFrame = frame
                 window.setFrame(frame, display: false)
                 if animates { window.setFrameOrigin(NSPoint(x: frame.minX, y: screen.frame.maxY)) }
@@ -191,6 +198,16 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
         // Preserve user resizing/tiling before the slide moves the frame offscreen.
         let frame = window.frame
         restingFrame = frame
+        workspace.preferences.lastWindowFrame = frame
+        if !animates || window.isMiniaturized {
+            window.orderOut(nil)
+            window.alphaValue = 1
+            if restoringFocus, NSApp.isActive, settingsController.window?.isVisible != true {
+                previousApplication?.activate(options: [])
+            }
+            onVisibilityChange?()
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = animates && !window.isMiniaturized ? 0.18 : 0
             context.timingFunction = CAMediaTimingFunction(name: .easeIn)
@@ -228,6 +245,9 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
     public func search() { show(); workspace.beginSearch() }
 
     public func shutdown() {
+        if isPresented, let window, !window.styleMask.contains(.fullScreen) {
+            workspace.preferences.lastWindowFrame = window.frame
+        }
         animationGeneration += 1
         isPresented = false
         pendingFullScreenHide = false
@@ -303,10 +323,29 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
             let leading = header.convert(.zero, to: nil).x
             let width = max(34, DrawerWorkspace.sidebarWidth - leading)
             if abs(self.workspace.toolbarLeadingWidth - width) > 0.5 { self.workspace.toolbarLeadingWidth = width }
+            self.alignWindowControlsWithHeader()
         }
     }
 
     public func windowDidResize(_ notification: Notification) { alignToolbarWithSidebar() }
+
+    public func windowDidUpdate(_ notification: Notification) { alignWindowControlsWithHeader() }
+
+    private func alignWindowControlsWithHeader() {
+        guard let window, !window.styleMask.contains(.fullScreen),
+              let header = headerView, header.window === window else { return }
+        let offset = DrawerToolbarView.verticalContentOffset
+        let center = NSPoint(x: header.bounds.midX,
+                             y: header.bounds.midY + (header.isFlipped ? offset : -offset))
+        for kind: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = window.standardWindowButton(kind), let parent = button.superview else { continue }
+            // Derive an absolute position so repeated AppKit layout passes cannot accumulate offsets.
+            let y = header.convert(center, to: parent).y - button.frame.height / 2
+            if abs(button.frame.minY - y) > 0.5 {
+                button.setFrameOrigin(NSPoint(x: button.frame.minX, y: y))
+            }
+        }
+    }
 
     private func handleKey(_ event: NSEvent) -> Bool {
         guard let window, event.window === window, window.attachedSheet == nil,
@@ -342,21 +381,24 @@ public final class FinderDrawerController: NSWindowController, NSWindowDelegate,
             return false
         }
         let numberKeys: [UInt16] = [18, 19, 20, 21, 23, 22, 26, 28, 25]
-        if modifiers == .command, let index = numberKeys.firstIndex(of: event.keyCode), workspace.tabs.indices.contains(index) {
-            workspace.selectTab(workspace.tabs[index].id)
+        if modifiers == .command, let index = numberKeys.firstIndex(of: event.keyCode), workspace.tabGroups.indices.contains(index) {
+            workspace.selectGroup(workspace.tabGroups[index].id)
             return true
         }
         if let command, workspace.browser?.renamingURL == nil,
            [.newTab, .closeTab, .settings, .newTerminal, .toggleSidebar, .nextTab, .previousTab,
-            .splitPane, .closeSplit, .focusOtherPane].contains(command) {
+            .splitPane, .splitTerminal, .splitFiles, .closeSplit, .focusOtherPane].contains(command) {
             workspace.perform(command); return true
         }
         if command == .goToFolder, !modifiers.isEmpty { workspace.beginLocations(); return true }
         // Plain o, editing shortcuts and terminal input keep their native meaning.
         if workspace.terminal != nil { return false }
-        if window.firstResponder is NSTextView { return false }
+        if window.firstResponder is NSTextView || window.firstResponder is NSSlider { return false }
         guard let browser = workspace.browser, browser.renamingURL == nil else { return false }
+        if command == .quickLook, modifiers.isEmpty, let playback = browser.previewPlayback,
+           playback.url == browser.previewEntry?.url { playback.toggle(); return true }
         switch (event.keyCode, modifiers) {
+        case (53, []) where browser.previewEntry != nil: browser.browseColumn(at: browser.focusedColumnIndex); return true
         case (53, []): hide(); return true
         case (123, []): browser.focusColumn(by: -1); return true
         case (124, []): browser.focusColumn(by: 1); return true
@@ -388,8 +430,23 @@ private final class DrawerWindow: NSWindow {
 
 /// Shared sizing policy keeps the drawer inside the usable area on small displays.
 enum DrawerGeometry {
+    static func restoredFrame(_ frame: NSRect, in screens: [NSRect], fallback: NSRect) -> NSRect {
+        guard frame.origin.x.isFinite, frame.origin.y.isFinite,
+              frame.width.isFinite, frame.height.isFinite, frame.width > 0, frame.height > 0 else {
+            return self.frame(in: fallback, preferredWidth: 1120, heightFraction: 0.65)
+        }
+        // Keep the saved display when possible, and recover windows from disconnected displays.
+        let area = screens.max { left, right in
+            let a = left.intersection(frame), b = right.intersection(frame)
+            return (a.isNull ? 0 : a.width * a.height) < (b.isNull ? 0 : b.width * b.height)
+        }.flatMap { $0.intersects(frame) ? $0 : nil } ?? fallback
+        let width = min(frame.width, area.width), height = min(frame.height, area.height)
+        return NSRect(x: min(max(frame.minX, area.minX), area.maxX - width),
+                      y: min(max(frame.minY, area.minY), area.maxY - height), width: width, height: height)
+    }
+
     static func frame(in area: NSRect, preferredWidth: CGFloat, heightFraction: Double) -> NSRect {
-        let width = min(max(preferredWidth, 760), max(1, area.width - 24))
+        let width = min(max(preferredWidth, 760), max(1, area.width))
         let height = min(max(430, area.height * heightFraction), area.height)
         return NSRect(x: area.midX - width / 2, y: area.maxY - height, width: width, height: height)
     }

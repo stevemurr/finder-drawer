@@ -148,7 +148,7 @@ final class DrawerInteractionTests: XCTestCase {
         try await waitUntil { field().map { AppKitSearchFieldFocusLocator.ownsFirstResponder($0) } == true }
         field()?.currentEditor()?.insertText("terminal")
         try await waitUntil { controller.workspace.actionQuery == "terminal" }
-        XCTAssertEqual(controller.workspace.filteredActions.map(\.id), ["terminal"])
+        XCTAssertEqual(controller.workspace.filteredActions.map(\.id), ["terminal", "splitTerminal"])
         controller.workspace.dismissActions()
         XCTAssertFalse(controller.workspace.isActionsPresented)
     }

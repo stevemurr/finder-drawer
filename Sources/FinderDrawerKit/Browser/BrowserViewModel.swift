@@ -47,7 +47,9 @@ struct BrowserColumn: Identifiable {
     /// visible-cell refresh from a full reload without comparing whole arrays
     /// during unrelated SwiftUI updates.
     private(set) var contentRevision: UInt64 = 0
-    private var rowByID: [URL: Int] = [:]
+    /// Shared with the column's table coordinator; copy-on-write makes that
+    /// free, so a listing is indexed once rather than once per consumer.
+    private(set) var rowByID: [URL: Int] = [:]
     /// Everything selected. Multi-selection drives batch operations.
     var selectedIDs: Set<URL> = []
     /// The row that anchors single-item behaviour — descent into a child
@@ -132,6 +134,7 @@ final class BrowserViewModel: Identifiable {
     @ObservationIgnored var onRequestColumnFocus: (() -> Void)?
     /// Notifies the host of a file selection, allowing it to update a preview.
     @ObservationIgnored var onPreviewFile: ((URL) -> Void)?
+    @ObservationIgnored var previewPlayback: (id: UUID, url: URL, toggle: () -> Void)?
     /// Cancels a debounced preview when the selection no longer identifies
     /// exactly one file. Without this, a quick file → folder/multi-selection
     /// move can open a stale file after the browser already points elsewhere.
@@ -361,6 +364,14 @@ final class BrowserViewModel: Identifiable {
     }
 
     /// Re-roots one level up. Used by ⌘↑ when already at the leftmost column.
+    /// Breadcrumb navigation selects the folder itself, never an incidental
+    /// first file that would open a preview while browsing directories.
+    func browseColumn(at index: Int) {
+        guard columns.indices.contains(index) else { return }
+        applySelection(ids: [], primary: nil, inColumn: index, descendsIntoDirectories: false)
+        requestColumnFocus()
+    }
+
     func goToParent() {
         guard focusedColumnIndex == 0, let root = currentRoot else {
             focusColumn(by: -1)
@@ -444,7 +455,7 @@ final class BrowserViewModel: Identifiable {
             copySelectedPaths()
         case .toggleHiddenFiles:
             preferences.showHiddenFiles.toggle()
-        case .splitPane, .closeSplit, .focusOtherPane, .openWith, .goToFolder, .newTab, .closeTab,
+        case .splitPane, .splitTerminal, .splitFiles, .closeSplit, .focusOtherPane, .openWith, .goToFolder, .newTab, .closeTab,
              .search, .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             onHostCommand?(command)
         }
@@ -748,9 +759,9 @@ final class BrowserViewModel: Identifiable {
         let sort = preferences.sortOrder
         Task { [weak self] in
             guard let self else { return }
-            let result: Result<[DirectoryEntry], Error>
+            let result: Result<DirectoryListing, Error>
             do {
-                result = .success(try await self.lister.contents(of: url, showHidden: showHidden, sort: sort))
+                result = .success(try await self.lister.listing(of: url, showHidden: showHidden, sort: sort))
             } catch {
                 result = .failure(error)
             }
@@ -759,22 +770,26 @@ final class BrowserViewModel: Identifiable {
         }
     }
 
-    private func apply(_ result: Result<[DirectoryEntry], Error>, to url: URL) {
+    private func apply(_ result: Result<DirectoryListing, Error>, to url: URL) {
         // The column may have been truncated while the listing was in flight.
         guard let index = columns.firstIndex(where: { $0.url == url }) else { return }
         columns[index].isLoading = false
         switch result {
-        case let .success(entries):
-            columns[index].entries = entries
-            columns[index].naturalWidthHint = BrowserColumnSizing.naturalWidth(entries: entries)
+        case let .success(listing):
+            columns[index].entries = listing.entries
+            columns[index].naturalWidthHint = listing.naturalWidth
             columns[index].errorMessage = nil
             // Drop anything that no longer exists — a rename or an external
             // change can delete rows out from under the selection. Rows that
             // survived stay selected, so a reload doesn't cost the user their
-            // multi-selection.
-            let surviving = Set(entries.map(\.id))
-            columns[index].selectedIDs.formIntersection(surviving)
-            if let primary = columns[index].primarySelectedID, !surviving.contains(primary) {
+            // multi-selection. The column's row index answers membership, so
+            // this costs O(selection) rather than hashing every listed URL.
+            let column = columns[index]
+            let surviving = column.selectedIDs.filter { column.rowIndex(for: $0) != nil }
+            if surviving.count != column.selectedIDs.count {
+                columns[index].selectedIDs = surviving
+            }
+            if let primary = column.primarySelectedID, column.rowIndex(for: primary) == nil {
                 columns[index].primarySelectedID = columns[index].selectedIDs.first
                 truncateColumns(after: index)
             }

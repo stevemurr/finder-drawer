@@ -20,7 +20,7 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
     case search
     case settings
     case actions, newTerminal, toggleSidebar, nextTab, previousTab
-    case splitPane, closeSplit, focusOtherPane
+    case splitPane, splitTerminal, splitFiles, closeSplit, focusOtherPane
 
     var id: Self { self }
 
@@ -52,7 +52,9 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .search: "Search Files"
         case .settings: "Settings…"
         case .splitPane: "Split Right"
-        case .closeSplit: "Single Pane"
+        case .splitTerminal: "Split with Terminal"
+        case .splitFiles: "Split with File Browser"
+        case .closeSplit: "Unpair Tabs"
         case .focusOtherPane: "Focus Other Pane"
         case .actions: "Actions"
         case .newTerminal: "Open Terminal Here in New Tab"
@@ -85,7 +87,7 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .closeTab: "xmark.rectangle"
         case .search: "magnifyingglass"
         case .settings: "gearshape"
-        case .splitPane: "rectangle.split.2x1"
+        case .splitPane, .splitTerminal, .splitFiles: "rectangle.split.2x1"
         case .closeSplit: "rectangle"
         case .focusOtherPane: "arrow.left.arrow.right"
         case .actions: "slider.horizontal.3"
@@ -140,7 +142,7 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .cut: Shortcut(keyCode: 7, character: "X", modifiers: .command)
         case .paste: Shortcut(keyCode: 9, character: "V", modifiers: .command)
         case .moveHere: Shortcut(keyCode: 9, character: "V", modifiers: [.command, .option])
-        case .duplicate: Shortcut(keyCode: 2, character: "D", modifiers: .command)
+        case .duplicate: Shortcut(keyCode: 2, character: "D", modifiers: [.command, .shift])
         case .copyPath: Shortcut(keyCode: 8, character: "C", modifiers: [.command, .option])
         case .goToFolder: Shortcut(keyCode: 5, character: "G", modifiers: [.command, .shift])
         case .toggleHiddenFiles: Shortcut(keyCode: 47, character: ".", modifiers: .command)
@@ -148,6 +150,8 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .closeTab: Shortcut(keyCode: 13, character: "W", modifiers: .command)
         case .search: Shortcut(keyCode: 3, character: "F", modifiers: .command)
         case .splitPane: Shortcut(keyCode: 42, character: "\\", modifiers: .command)
+        case .splitTerminal: Shortcut(keyCode: 2, character: "D", modifiers: .command)
+        case .splitFiles: Shortcut(keyCode: 1, character: "S", modifiers: .command)
         case .closeSplit: Shortcut(keyCode: 42, character: "\\", modifiers: [.command, .shift])
         case .focusOtherPane: Shortcut(keyCode: 124, character: "→", modifiers: [.command, .option])
         case .actions: Shortcut(keyCode: 40, character: "K", modifiers: .command)
@@ -181,7 +185,7 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .search:
             [Shortcut(keyCode: 44, character: "/", modifiers: .command)]
         case .undo, .redo, .copy, .cut, .paste, .moveHere, .duplicate,
-             .openWith, .newFolder, .moveToTrash, .copyPath, .splitPane, .closeSplit,
+             .openWith, .newFolder, .moveToTrash, .copyPath, .splitPane, .splitTerminal, .splitFiles, .closeSplit,
              .toggleHiddenFiles, .newTab, .closeTab,
              .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             []
@@ -223,7 +227,7 @@ enum BrowserCommand: String, CaseIterable, Identifiable, Sendable {
         case .copy, .cut, .duplicate, .moveToTrash, .showInFinder, .copyPath:
             .oneOrMore
         case .undo, .redo, .paste, .moveHere, .newFolder, .goToFolder, .toggleHiddenFiles,
-             .splitPane, .closeSplit, .focusOtherPane, .newTab, .closeTab, .search, .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
+             .splitPane, .splitTerminal, .splitFiles, .closeSplit, .focusOtherPane, .newTab, .closeTab, .search, .settings, .actions, .newTerminal, .toggleSidebar, .nextTab, .previousTab:
             .none
         }
     }

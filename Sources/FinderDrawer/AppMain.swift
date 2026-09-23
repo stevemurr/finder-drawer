@@ -95,7 +95,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
         let file = NSMenu(title: "File")
         for (title, action, key, modifiers) in [
             ("New Folder", "newFolder:", "n", NSEvent.ModifierFlags([.command, .shift])),
-            ("Duplicate", "duplicate:", "d", .command),
+            ("Duplicate", "duplicate:", "d", [.command, .shift]),
             ("Rename", "renameFile:", "", []),
             ("Move to Trash", "moveToTrash:", "\u{8}", .command),
         ] {

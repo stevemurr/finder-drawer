@@ -33,12 +33,43 @@ struct DirectoryEntry: Identifiable, Hashable, Sendable {
     let fileSize: Int64?
     let modifiedAt: Date?
     let contentType: UTType?
+    /// Resolved once when the entry is built, off the main actor.
+    /// `UTType.localizedDescription` is a Launch Services lookup, and rows
+    /// read it on every configure and the Kind sort on every comparison.
+    let kindDescription: String
 
     var id: URL { url }
 
-    var kindDescription: String {
-        contentType?.localizedDescription ?? (isDirectory ? "Folder" : "Document")
+    init(
+        url: URL,
+        displayName: String,
+        isDirectory: Bool,
+        isPackage: Bool,
+        isHidden: Bool,
+        fileSize: Int64?,
+        modifiedAt: Date?,
+        contentType: UTType?,
+        kindDescription: String? = nil
+    ) {
+        self.url = url
+        self.displayName = displayName
+        self.isDirectory = isDirectory
+        self.isPackage = isPackage
+        self.isHidden = isHidden
+        self.fileSize = fileSize
+        self.modifiedAt = modifiedAt
+        self.contentType = contentType
+        self.kindDescription = kindDescription
+            ?? contentType?.localizedDescription
+            ?? (isDirectory ? "Folder" : "Document")
     }
+}
+
+/// One directory read, plus the width measured from it while still off the
+/// main actor.
+struct DirectoryListing: Sendable {
+    let entries: [DirectoryEntry]
+    let naturalWidth: CGFloat
 }
 
 enum DirectoryListerError: LocalizedError {
@@ -89,8 +120,24 @@ actor DirectoryLister {
         return Self.sorted(entries, by: sort)
     }
 
+    /// Lists and measures in one hop, so filename measurement for a large
+    /// folder never runs on the main actor when the listing lands.
+    func listing(
+        of directory: URL,
+        showHidden: Bool,
+        sort: BrowserSort
+    ) throws -> DirectoryListing {
+        let entries = try contents(of: directory, showHidden: showHidden, sort: sort)
+        return DirectoryListing(
+            entries: entries,
+            naturalWidth: BrowserColumnSizing.naturalWidth(entries: entries)
+        )
+    }
+
+    private static let resourceKeySet = Set(resourceKeys)
+
     static func makeEntry(for url: URL) -> DirectoryEntry? {
-        let values = try? url.resourceValues(forKeys: Set(resourceKeys))
+        let values = try? url.resourceValues(forKeys: resourceKeySet)
         let isPackage = values?.isPackage ?? false
         return DirectoryEntry(
             url: url,

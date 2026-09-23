@@ -6,8 +6,6 @@ struct DrawerRootView: View {
     @Bindable var workspace: DrawerWorkspace
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var hoveringTabs = false
-
     var body: some View {
         HStack(spacing: 0) {
             if workspace.preferences.isSidebarVisible {
@@ -16,14 +14,15 @@ struct DrawerRootView: View {
                 Divider()
             }
             VStack(spacing: 0) {
-                tabBar
-                Divider()
-                if workspace.isSplit {
-                    HSplitView {
-                        pane(.primary).frame(minWidth: 240)
-                        pane(.secondary).frame(minWidth: 240)
-                    }
-                } else { pane(.primary) }
+                Group {
+                    if workspace.isSplit {
+                        HSplitView {
+                            pane(.primary).padding(.trailing, 4).frame(minWidth: 240)
+                            pane(.secondary).padding(.leading, 4).frame(minWidth: 240)
+                        }
+                    } else { pane(.primary) }
+                }
+                .padding(8)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -70,7 +69,7 @@ struct DrawerRootView: View {
                         Spacer(minLength: 4)
                         if tab.browser?.isTransferringFiles == true { ProgressView().controlSize(.mini) }
                         Button { workspace.focusPane(pane); workspace.closeSplit() } label: { Image(systemName: "arrow.up.left.and.arrow.down.right") }
-                            .buttonStyle(.plain).help("Keep this pane")
+                            .buttonStyle(.plain).help("Unpair tabs")
                     }.font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                         .padding(.horizontal, 12).frame(height: 33)
                         .background(workspace.activePane == pane ? Color.accentColor.opacity(0.035) : .clear)
@@ -78,10 +77,10 @@ struct DrawerRootView: View {
                 }
                 if let terminal = tab.terminal {
                     TerminalSurface(session: terminal).id(terminal.id)
+                        .padding(6)
+                        .background(Color(nsColor: .textBackgroundColor))
                 } else if let browser = tab.browser, browser.currentRoot != nil {
-                    breadcrumbs(browser)
-                    Divider()
-                    BrowserColumnSurface(viewModel: browser, showsItemSizes: workspace.preferences.showItemSizes)
+                    BrowserPaneView(browser: browser, preferences: workspace.preferences)
                 } else {
                     VStack(spacing: 12) {
                         Image(systemName: "folder").font(.system(size: 32)).foregroundStyle(.secondary)
@@ -92,6 +91,7 @@ struct DrawerRootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .drawerPaneBezel(enabled: tab.browser == nil)
             .background(DrawerPaneMarker(pane: pane))
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("drawer-pane-" + pane.rawValue)
@@ -166,63 +166,6 @@ struct DrawerRootView: View {
                 .background(workspace.browser?.currentRoot?.standardizedFileURL == url.standardizedFileURL
                             ? Color.accentColor.opacity(0.14) : .clear, in: RoundedRectangle(cornerRadius: 8))
         }.buttonStyle(.plain).help(url.path)
-    }
-
-    private var tabBar: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(workspace.tabs) { tab in
-                    DrawerTabButton(tab: tab, isSelected: tab.id == workspace.selectedTabID,
-                                    select: { workspace.selectTab(tab.id) }, close: { workspace.closeTab(tab.id) })
-                }
-                HStack(spacing: 3) {
-                    Menu {
-                        Button("New File Tab", action: { workspace.newTab() }).keyboardShortcut("n")
-                        Button("New Terminal Here", action: { workspace.newTerminal() }).keyboardShortcut("t")
-                    } label: {
-                        Image(systemName: "plus").font(.system(size: 15, weight: .medium)).frame(width: 28, height: 30)
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("New tab").accessibilityLabel("New Tab")
-                    Divider().frame(height: 14)
-                    Menu {
-                        Button("Split with File Browser") { workspace.splitPane(terminal: false) }
-                        Button("Split with Terminal") { workspace.splitPane(terminal: true) }
-                        if workspace.isSplit {
-                            Divider()
-                            Button("Focus Other Pane") { workspace.perform(.focusOtherPane) }
-                            Button("Single Pane") { workspace.closeSplit() }
-                        }
-                    } label: {
-                        Image(systemName: "rectangle.split.2x1").font(.system(size: 14)).frame(width: 28, height: 30)
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Split View (⌘\\)").accessibilityLabel("Split View")
-                }
-                .padding(.horizontal, 4)
-                .opacity(hoveringTabs ? 1 : 0.55)
-            }.padding(.horizontal, 8)
-        }
-        .scrollIndicators(.hidden).font(.system(size: 12)).frame(height: 48)
-        .onHover { hoveringTabs = $0 }
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: hoveringTabs)
-    }
-
-    private func breadcrumbs(_ browser: BrowserViewModel) -> some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 8) {
-                if browser.isTransferringFiles { ProgressView().controlSize(.mini) }
-                Button { browser.goToParent() } label: { Image(systemName: "arrow.up") }
-                    .help("Go to parent folder (⌘↑)")
-                ForEach(Array(browser.columns.enumerated()), id: \.element.id) { index, column in
-                    if index > 0 { Image(systemName: "chevron.right").font(.system(size: 8)) }
-                    Button(column.url.lastPathComponent.isEmpty ? "/" : column.url.lastPathComponent) {
-                        browser.focusColumn(at: index)
-                    }.help(column.url.path)
-                }
-            }.buttonStyle(.plain).padding(.horizontal, 14)
-        }
-        .scrollIndicators(.hidden).font(.system(size: 11)).foregroundStyle(.secondary).frame(height: 33)
     }
 
 }
