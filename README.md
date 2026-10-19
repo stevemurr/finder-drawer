@@ -1,6 +1,6 @@
 # Finder Drawer
 
-A standalone macOS drawer with column browsing, fast filename search, native terminal tabs, and contextual keyboard actions, originally extracted from Topside. Your folders and shells stay a shortcut away.
+A standalone macOS drawer with column browsing, fast filename search, native terminal tabs, and contextual keyboard actions. Your folders and shells stay a shortcut away.
 
 ![Finder Drawer on macOS with column browsing, the Places tray, a Markdown viewer, and the floating Dock](docs/images/finder-drawer.png)
 
@@ -101,7 +101,7 @@ drawer.show()
 
 The controller accepts a custom index URL, UserDefaults instance, and initial folders. Embedders should supply their own index URL and preferences domain. Browser implementation types are internal; the controller is the initial public integration point.
 
-Finder Drawer keeps its index in `~/Library/Application Support/FinderDrawer/index.sqlite3` and preferences under `com.stevemurr.finder-drawer`. It does not import Topside’s preferences or index. The standalone app permits file operations throughout locations your account can access by default. Settings → Files & Access can restrict writes to indexed folders; those boundaries resolve symlinks. Search indexing remains limited to explicitly chosen folders in either mode. Package embedders retain restricted writes by default and can opt in with `allowsSystemWideAccess: true`.
+Finder Drawer keeps its index in `~/Library/Application Support/FinderDrawer/index.sqlite3` and preferences under `com.stevemurr.finder-drawer`. The standalone app permits file operations throughout locations your account can access by default. Settings → Files & Access can restrict writes to indexed folders; those boundaries resolve symlinks. Search indexing remains limited to explicitly chosen folders in either mode. Package embedders retain restricted writes by default and can opt in with `allowsSystemWideAccess: true`.
 
 This app is not App Sandbox enabled. macOS still enforces filesystem permissions, protected system volumes, and privacy controls. Full Disk Access cannot be granted by an entitlement or enabled automatically. Use **Settings → Files & Access → Open Full Disk Access…**, add the built app, enable it, then quit and reopen it. The adjacent **Show App in Finder** action locates the exact app bundle. Local ad-hoc rebuilds can require granting access again; use a stable Developer ID signing identity for distribution. A sandboxed host would need a security-scoped bookmark adapter.
 
