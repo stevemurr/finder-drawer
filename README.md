@@ -2,6 +2,12 @@
 
 A standalone macOS drawer with column browsing, fast filename search, native terminal tabs, and contextual keyboard actions, originally extracted from Topside. Your folders and shells stay a shortcut away.
 
+![Finder Drawer on macOS with column browsing, the Places tray, a Markdown viewer, and the floating Dock](docs/images/finder-drawer.png)
+
+![Finder Drawer in dark mode with the Git tray, recent commits, a docked demo chat, and the floating Dock](docs/images/finder-drawer-chat-git.png)
+
+*Git history and docked Chat, shown with a demo conversation.*
+
 ## Run
 
 Requires macOS 15 or later, Xcode command-line tools with the macOS 26 SDK / Swift 6.2 or later, and Python 3. The native terminal uses SwiftTerm 1.20.0 (MIT), fetched automatically by Swift Package Manager.
